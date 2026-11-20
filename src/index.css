@@ -1,0 +1,126 @@
+@import "tailwindcss";
+
+:root {
+  --edu-primary: #087f70;
+  --edu-primary-hover: #06695d;
+  --edu-deep: #164e63;
+  --edu-bg: #f4f8f7;
+  --edu-surface: #ffffff;
+  --edu-grade: #dc2626;
+  --edu-text: #1f2937;
+  --edu-muted: #4b5563;
+  --edu-border: #d5e2df;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    font-family: 'Be Vietnam Pro', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    font-size: 15px;
+    color: var(--edu-text);
+    background-color: var(--edu-bg);
+  }
+
+  h1,
+  h2,
+  h3,
+  .font-display {
+    font-family: 'Plus Jakarta Sans', 'Be Vietnam Pro', system-ui, sans-serif;
+  }
+
+  .font-mono,
+  .tabular-nums {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Smooth, fast UI transitions respecting reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Custom subtle scrollbars for studio panels */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5d1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9fb4ae;
+}
+
+/* MathLive custom styling for clear teacher readability */
+math-field {
+  font-size: 1.35rem;
+  min-height: 54px;
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1.5px solid #cbd5e1;
+  background: #ffffff;
+  color: #1f2937;
+  outline: none;
+  display: block;
+}
+
+math-field:focus-within {
+  border-color: #087f70;
+  box-shadow: 0 0 0 3px rgba(8, 127, 112, 0.15);
+}
+
+/* Print stylesheet: print ONLY document pages and selected annotations */
+@media print {
+  @page {
+    margin: 0;
+  }
+  body {
+    background: #ffffff !important;
+  }
+  .no-print,
+  header,
+  nav,
+  aside,
+  footer,
+  .studio-ribbon,
+  .studio-tabs,
+  .studio-statusbar,
+  .object-selection-chrome {
+    display: none !important;
+  }
+  .print-canvas-root {
+    position: static !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+    height: auto !important;
+  }
+  .pdf-page-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 !important;
+    page-break-after: always;
+    break-after: page;
+  }
+}

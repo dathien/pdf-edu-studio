@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="108" fill="#087F70" />
+  <rect x="28" y="28" width="456" height="456" rx="86" fill="url(#bgGrad)" />
+  <!-- Document sheet -->
+  <path d="M132 104C132 90.745 142.745 80 156 80H292L380 168V408C380 421.255 369.255 432 356 432H156C142.745 432 132 421.255 132 408V104Z" fill="#FFFFFF" />
+  <!-- Folded corner -->
+  <path d="M292 80V148C292 159.046 300.954 168 312 168H380L292 80Z" fill="#CCFBF1" />
+  <!-- Document content lines -->
+  <rect x="172" y="198" width="112" height="16" rx="8" fill="#164E63" />
+  <rect x="172" y="236" width="152" height="12" rx="6" fill="#94A3B8" />
+  <rect x="172" y="266" width="128" height="12" rx="6" fill="#94A3B8" />
+  <!-- Grading checkmark badge -->
+  <circle cx="212" cy="348" r="44" fill="#087F70" />
+  <path d="M192 348L206 362L234 332" stroke="#FFFFFF" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" />
+  <!-- Editing pen -->
+  <g transform="translate(268 258) rotate(-42)">
+    <rect x="0" y="0" width="136" height="36" rx="10" fill="#164E63" />
+    <rect x="96" y="0" width="24" height="36" fill="#0D9488" />
+    <path d="M0 4L-32 18L0 32V4Z" fill="#FDE68A" />
+    <path d="M-21 13L-32 18L-21 23V13Z" fill="#164E63" />
+  </g>
+  <defs>
+    <linearGradient id="bgGrad" x1="28" y1="28" x2="484" y2="484" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0D9488" />
+      <stop offset="1" stop-color="#164E63" />
+    </linearGradient>
+  </defs>
+</svg>

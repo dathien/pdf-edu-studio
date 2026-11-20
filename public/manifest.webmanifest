@@ -1,0 +1,40 @@
+{
+  "id": "/",
+  "name": "PDF EDU STUDIO",
+  "short_name": "PDF EDU",
+  "description": "Chỉnh sửa – Soạn thảo – Chấm bài thông minh. Công cụ xử lý PDF chuyên dụng dành cho giáo viên và học sinh, hoạt động online và offline trên thiết bị.",
+  "lang": "vi",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#087F70",
+  "background_color": "#F4F8F7",
+  "categories": ["education", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/icons/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

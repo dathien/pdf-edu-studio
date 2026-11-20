@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PDF EDU STUDIO — Chỉnh sửa – Soạn thảo – Chấm bài thông minh</title>
+    <meta
+      name="description"
+      content="Công cụ xử lý PDF chuyên dụng dành cho giáo viên và học sinh, hỗ trợ chỉnh sửa tài liệu, soạn thảo công thức khoa học, vẽ hình, chấm bài và làm việc offline ngay trên thiết bị."
+    />
+    <meta property="og:title" content="PDF EDU STUDIO — Chỉnh sửa – Soạn thảo – Chấm bài thông minh" />
+    <meta
+      property="og:description"
+      content="Công cụ xử lý PDF chuyên dụng dành cho giáo viên và học sinh, hỗ trợ chỉnh sửa tài liệu, soạn thảo công thức khoa học, vẽ hình, chấm bài và làm việc offline ngay trên thiết bị."
+    />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#087F70" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="PDF EDU" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=IBM+Plex+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="bg-[#F4F8F7] text-[#1F2937] antialiased selection:bg-[#087F70]/20 selection:text-[#164E63]">
+    <div id="root"></div>
+    <script>
+      globalThis.PACKAGE_VERSION = '3.2.2';
+      (function () {
+        try {
+          var host = window.location.hostname || '';
+          var isDevPreview =
+            host.indexOf('ais-dev-') === 0 || host === 'localhost' || host === '127.0.0.1';
+          if (isDevPreview && 'serviceWorker' in navigator && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.getRegistrations().then(function (regs) {
+              if (!regs.length) return;
+              Promise.all(regs.map(function (r) { return r.unregister(); })).then(function () {
+                if ('caches' in window) {
+                  caches.keys().then(function (keys) {
+                    Promise.all(
+                      keys
+                        .filter(function (k) { return k.indexOf('pdf-edu-studio-') === 0; })
+                        .map(function (k) { return caches.delete(k); })
+                    ).then(function () {
+                      if (!sessionStorage.getItem('pdf_edu_sw_cleaned')) {
+                        sessionStorage.setItem('pdf_edu_sw_cleaned', '1');
+                        window.location.reload();
+                      }
+                    });
+                  });
+                }
+              });
+            });
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
