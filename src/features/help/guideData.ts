@@ -227,24 +227,24 @@ export const GUIDE_GROUPS: GuideGroup[] = [
   {
     id: 'diagrams-graphs',
     title: 'Hình vẽ và đồ thị',
-    summary: 'Thư viện 126 hình mẫu, hình học động 2D, hình học không gian 3D, đồ thị hàm số, chèn ảnh và hình cơ bản.',
+    summary: 'Thư viện hình mẫu, hình học động 2D, hình học không gian 3D, đồ thị hàm số, chèn ảnh và hình cơ bản.',
     features: [
       {
         id: 'thu-vien-hinh',
         groupId: 'diagrams-graphs',
-        title: 'Chèn hình từ thư viện 126 hình mẫu khoa học',
+        title: 'Chèn hình từ thư viện hình mẫu khoa học',
         purpose: 'Chèn nhanh hình học phẳng, hình không gian, sơ đồ mạch điện và dụng cụ thí nghiệm hóa học chuẩn giáo dục.',
-        toolLocation: 'Thẻ Hình vẽ → Thư viện 126 hình mẫu (cột Hình vẽ bên phải).',
+        toolLocation: 'Thẻ Hình vẽ → Thư viện hình mẫu (cột Hình vẽ bên phải).',
         steps: [
-          'Chọn thẻ Hình vẽ → Thư viện 126 hình mẫu.',
+          'Chọn thẻ Hình vẽ → Thư viện hình mẫu.',
           'Lọc theo môn (Tất cả / Toán / Vật lí / Hóa học) hoặc nhập từ khóa tìm kiếm (tam giác, chóp, mạch điện, buret...).',
           'Tùy chỉnh bật/tắt nhãn chữ, độ dày nét và màu nét phía trên lưới hình.',
           'Nhấp vào hình cần dùng để chèn ngay vào trang PDF, sau đó kéo di chuyển hoặc kéo góc để thay đổi kích thước.',
         ],
         illustrationKey: 'diagram-library',
         illustrationCaption: 'Tìm kiếm, lọc môn học và nhấp 1 lần để chèn hình vector vào trang PDF',
-        note: 'Thầy cô có thể xem trước toàn bộ 126 mẫu hình ngay cả khi chưa mở tệp PDF.',
-        keywords: ['thu vien hinh', '120 hinh', '126 hinh', 'mach dien', 'buret', 'hinh mau'],
+        note: 'Thầy cô có thể xem trước toàn bộ các mẫu hình trong thư viện ngay cả khi chưa mở tệp PDF.',
+        keywords: ['thu vien hinh', 'hinh ve', 'mach dien', 'buret', 'hinh mau'],
       },
       {
         id: 'hinh-hoc-2d',

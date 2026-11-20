@@ -80,12 +80,15 @@ export const UserGuidePage: React.FC = () => {
       {/* Top Bar: Title, Subtitle & Return to Document Button */}
       <div className="bg-white border-b border-slate-200 px-4 sm:px-6 py-4 shrink-0">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="min-w-0">
+          <div className="min-w-0 max-w-3xl">
             <h1 className="text-[24px] font-bold text-[#164E63] tracking-tight leading-tight">
               HƯỚNG DẪN SỬ DỤNG
             </h1>
-            <p className="text-[16px] text-slate-600 mt-0.5">
+            <p className="text-[16px] font-medium text-[#087F70] mt-0.5">
               Chọn công việc thầy cô muốn thực hiện.
+            </p>
+            <p className="text-[15.5px] text-slate-600 leading-relaxed mt-1">
+              PDF EDU STUDIO — Chỉnh sửa – Soạn thảo – Chấm bài thông minh. Công cụ xử lý PDF chuyên biệt dành cho giáo dục, hỗ trợ chỉnh sửa văn bản, chèn công thức khoa học, vẽ hình minh họa, chú thích, chấm bài và quản lý tài liệu PDF trên cùng một nền tảng.
             </p>
           </div>
 

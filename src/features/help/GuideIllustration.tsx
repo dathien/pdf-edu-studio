@@ -214,9 +214,9 @@ function renderIllustrationSvg(key: GuideIllustrationKey): React.ReactNode {
           <text x="106" y="226" textAnchor="middle" fontSize="12" fontWeight="700" fill="#087F70">A</text>
           <text x="326" y="226" textAnchor="middle" fontSize="12" fontWeight="700" fill="#087F70">B</text>
 
-          {/* Right: 126 Diagram Library */}
+          {/* Right: Scientific Diagram Library */}
           <rect x="436" y="88" width="302" height="254" rx="10" fill="#FFFFFF" stroke="#087F70" strokeWidth="2" />
-          <text x="452" y="112" fontSize="13" fontWeight="700" fill="#164E63">Thư viện 126 hình khoa học</text>
+          <text x="452" y="112" fontSize="13" fontWeight="700" fill="#164E63">Thư viện hình khoa học</text>
           <rect x="452" y="122" width="270" height="28" rx="6" fill="#F8FAFC" stroke="#CBD5E1" />
           <text x="464" y="140" fontSize="11.5" fill="#64748B">Tìm: tam giác, chóp, mạch điện, buret...</text>
           {['Tất cả', 'Toán', 'Vật lí', 'Hóa học'].map((f, i) => (

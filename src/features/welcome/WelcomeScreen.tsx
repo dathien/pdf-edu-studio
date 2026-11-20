@@ -89,7 +89,7 @@ export const WelcomeScreen: React.FC = () => {
                 </div>
               </div>
               <p className="text-[15.5px] text-slate-600 leading-relaxed pt-1">
-                Xử lý tệp PDF trực tiếp trên thiết bị của thầy/cô. Soạn công thức Toán – Lí – Hóa – Sinh – Tin sắc nét, vẽ 120+ hình khoa học, chấm bài tự luận & trắc nghiệm xuất Excel và sử dụng ngoại tuyến không cần đăng nhập.
+                Công cụ xử lý PDF chuyên biệt dành cho giáo dục, hỗ trợ chỉnh sửa văn bản, chèn công thức khoa học, vẽ hình minh họa, chú thích, chấm bài và quản lý tài liệu PDF trên cùng một nền tảng.
               </p>
             </div>
 

@@ -2,36 +2,35 @@
 
 **Chỉnh sửa – Soạn thảo – Chấm bài thông minh**
 
-Ứng dụng web & PWA giáo dục toàn diện dành cho giáo viên, học sinh, giảng viên và sinh viên Việt Nam. Xử lý 100% cục bộ ngay trên thiết bị, không yêu cầu đăng nhập, không cần API key, hỗ trợ hoạt động cả online và offline.
+Công cụ xử lý PDF chuyên biệt dành cho giáo dục, hỗ trợ chỉnh sửa văn bản, chèn công thức khoa học, vẽ hình minh họa, chú thích, chấm bài và quản lý tài liệu PDF trên cùng một nền tảng.
 
 ## Tính năng chính
 
-- **Đọc & Chỉnh sửa PDF tiếng Việt**: Sửa chữ trực tiếp trên văn bản gốc (kèm phát hiện trang scan), thêm văn bản Unicode (nhúng sẵn font DejaVuSans/DejaVuSerif), tìm kiếm & thay thế, chèn hình ảnh, bảng biểu, ghi chú, chữ ký hình ảnh.
-- **Soạn công thức 5 môn học (MathLive + MathJax SVG + Typst)**: Trình soạn trực quan không cần nhớ mã LaTeX, hỗ trợ Toán, Vật lí, Hóa học, Sinh học, Tin học và cú pháp Typst, xuất đường nét vector sắc nét vào PDF.
-- **Thư viện 120 hình vẽ khoa học + 3 Xưởng vẽ tương tác**:
-  - 120 mẫu hình vector Toán, Vật lí, Hóa học có nhãn thông minh chống đè cạnh.
-  - **Xưởng Hình học động 2D** (dựng hình phụ thuộc kéo thả trực tiếp).
-  - **Xưởng Đồ thị hàm số** (bộ phân tích toán học an toàn không dùng `eval`, thanh trượt tham số `a, b, c`, tự động xử lý tiệm cận).
-  - **Xưởng Hình học không gian 3D (Three.js)** hỗ trợ xoay góc nhìn, mặt phẳng cắt và xuất hình chiếu vector 2D nét liền/nét đứt vào PDF.
-- **Chấm bài thông minh & Xuất Excel**:
-  - Chấm tự luận, trắc nghiệm ABCD, Đúng/Sai 4 ý chuẩn THPT 2025 (tùy biến thang điểm), Trả lời ngắn.
-  - Đóng dấu chấm đỏ, gắn ô điểm câu đồng bộ hai chiều với bảng điểm, khung tổng điểm tự cập nhật.
-  - Sổ điểm cục bộ (IndexedDB) & Xuất Excel `.xlsx` / CSV (UTF-8 BOM).
-- **Quản lý trang & Bảo mật đề thi**: Ghép PDF, Tách PDF (ZIP), Cắt lề (CropBox), Nén PDF 3 mức, Chuyển ảnh thành PDF (A4/A5/2-up), Xóa vĩnh viễn nội dung bảo mật (Redaction dựng lại trang phẳng + xác minh không còn văn bản ẩn), Xóa Metadata, Dấu chìm (Watermark), Đánh số trang, Chế độ Đề mật không lưu nháp.
-- **OCR cục bộ (Tesseract.js)**: Tiền xử lý chỉnh nghiêng (Deskew), tương phản, đen trắng và nhận dạng tiếng Việt + tiếng Anh ngay trên trình duyệt.
-- **12 Tài liệu thực hành mẫu** tích hợp sẵn & **PWA Offline**.
+- **Đọc & Chỉnh sửa PDF tiếng Việt**: Sửa chữ trực tiếp trên văn bản gốc (kèm phát hiện trang scan), thêm văn bản Unicode (nhúng sẵn font DejaVuSans/DejaVuSerif), tìm kiếm & thay thế, chèn hình ảnh, bảng biểu, ghi chú và chữ ký hình ảnh.
+- **Soạn công thức khoa học (MathLive + MathJax SVG + Typst)**: Trình soạn trực quan không cần nhớ mã LaTeX, hỗ trợ Toán, Vật lí, Hóa học, Sinh học, Tin học và cú pháp Typst, xuất đường nét vector sắc nét vào PDF.
+- **Thư viện hình vẽ khoa học & Xưởng vẽ tương tác**:
+  - Thư viện hình minh họa vector Toán, Vật lí, Hóa học có nhãn chống đè cạnh.
+  - **Hình học động 2D**: Dựng hình phụ thuộc kéo thả trực tiếp.
+  - **Đồ thị hàm số**: Bộ phân tích toán học an toàn, hỗ trợ tham số và xử lý tiệm cận.
+  - **Hình học không gian 3D (Three.js)**: Hỗ trợ xoay góc nhìn, mặt phẳng cắt và xuất hình chiếu vector 2D nét liền/nét đứt vào PDF.
+- **Chấm bài & Quản lý bảng điểm**:
+  - Hỗ trợ giáo viên chấm bài thủ công trực tiếp trên PDF (bút đỏ, đóng dấu đúng/sai, ghi điểm từng câu, nhận xét nhanh, khung tổng điểm đồng bộ) cùng bảng đối chiếu đáp án trắc nghiệm (ABCD, Đúng/Sai 4 ý, Trả lời ngắn).
+  - Lưu kết quả chấm bài cục bộ trên trình duyệt (IndexedDB) và xuất bảng điểm định dạng Excel (`.xlsx`) / CSV.
+- **Quản lý trang & Bảo mật tài liệu**: Ghép PDF, Tách PDF (ZIP), Cắt lề (CropBox), Nén PDF, Chuyển ảnh thành PDF (A4/A5/2-up), Xóa vĩnh viễn nội dung (Redaction), Xóa Metadata, Dấu chìm (Watermark), Đánh số trang và Chế độ Đề mật không lưu nháp.
+- **Nhận dạng văn bản OCR (Tesseract.js)**: Tiền xử lý chỉnh thẳng trang, tăng tương phản, đen trắng và nhận dạng tiếng Việt + tiếng Anh ngay trên trình duyệt.
+- **Thư viện tài liệu mẫu tích hợp sẵn** & hỗ trợ cài đặt **PWA** để làm việc ngoại tuyến sau khi trình duyệt đã tải đủ tài nguyên đệm.
 
 ## Chạy cục bộ & Triển khai
 
 ```bash
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
-Build sản phẩm (sẵn sàng triển khai lên Vercel / GitHub Pages):
+Build sản phẩm (tương thích Vercel / GitHub Pages, đầu ra tại thư mục `dist`):
 
 ```bash
-npm run build
+bun run build
 ```
 
 ## Bản quyền

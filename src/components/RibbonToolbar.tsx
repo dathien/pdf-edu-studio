@@ -422,7 +422,7 @@ export const RibbonToolbar: React.FC = () => {
           <>
             <RibbonBtn
               icon={<LayoutGrid className="w-[22px] h-[22px] text-[#087F70]" />}
-              label="Thư viện 126 hình mẫu"
+              label="Thư viện hình mẫu"
               onClick={() => setRightPanelMode('diagrams')}
             />
             <RibbonBtn
