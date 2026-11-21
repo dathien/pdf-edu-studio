@@ -15,7 +15,6 @@ import {
   PenTool,
   RotateCcw,
   Square,
-  Tag,
   Trash2,
   Undo2,
 } from 'lucide-react';
@@ -379,44 +378,28 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
   };
 
   // ============================================================================
-  // CASE 1: UNCLASSIFIED QUESTION (NEVER RENDERED IN SOLVE/PREVIEW; COMPACT MARKER IN AUTHOR)
+  // CASE 1: UNCLASSIFIED QUESTION
+  // NEVER show warning labels or boxes covering PDF content (Requirement #5)!
+  // Only highlight questionBounds softly when explicitly selected in the sidebar.
   // ============================================================================
   if (question.classificationStatus === 'unclassified') {
-    if (mode === 'solve') return null;
+    if (mode !== 'author' || !selected) return null;
+    const qb = question.questionBounds || question.region;
+    const hlX = (typeof qb.nx === 'number' ? qb.nx * pageWidth : qb.x) * zoom;
+    const hlY = (typeof qb.ny === 'number' ? qb.ny * pageHeight : qb.y) * zoom;
+    const hlW = (typeof qb.nw === 'number' ? qb.nw * pageWidth : qb.width) * zoom;
+    const hlH = (typeof qb.nh === 'number' ? qb.nh * pageHeight : qb.height) * zoom;
     return (
       <div
         data-question-id={question.id}
         style={{
-          left: `${resolvedX * zoom}px`,
-          top: `${resolvedY * zoom}px`,
+          left: `${Math.max(4, hlX - 4)}px`,
+          top: `${Math.max(4, hlY - 4)}px`,
+          width: `${Math.max(80, hlW + 8)}px`,
+          height: `${Math.max(24, hlH + 8)}px`,
         }}
-        onClick={(e) => {
-          e.stopPropagation();
-          onSelect?.();
-        }}
-        className={`absolute z-30 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[13px] font-bold shadow-xs cursor-pointer transition-all ${
-          selected
-            ? 'bg-amber-600 border-amber-700 text-white ring-2 ring-amber-300'
-            : 'bg-amber-50/95 border-amber-500 text-amber-950 hover:bg-amber-100'
-        }`}
-        title="Câu hỏi chưa xác định dạng tự động — nhấn để chọn dạng phù hợp"
-      >
-        <Tag className="w-3.5 h-3.5 shrink-0" />
-        <span>{question.code} · Chưa xác định dạng</span>
-        {mode === 'author' && onDeleteQuestion && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDeleteQuestion();
-            }}
-            className="ml-1 p-0.5 rounded hover:bg-red-100 hover:text-red-700 cursor-pointer"
-            title="Xóa câu hỏi này"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        )}
-      </div>
+        className="pointer-events-none absolute z-20 rounded-lg border-2 border-dashed border-amber-500/80 bg-amber-200/10"
+      />
     );
   }
 

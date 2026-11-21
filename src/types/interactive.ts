@@ -268,6 +268,10 @@ export interface InteractiveQuestion {
   teacherModified?: boolean;
   /** Distinguishes verified classified questions from uncertain ones (never silently forced into Essay) */
   classificationStatus?: 'classified' | 'unclassified';
+  /** Short plain-Vietnamese explanation when classificationStatus is 'unclassified' */
+  unclassifiedReason?: string;
+  /** Top likely question types suggested for 1-click teacher resolution */
+  suggestedTypes?: InteractiveQuestionType[];
   /** Controls how the widget overlays the PDF so original text and images are never obscured */
   overlayMode?: 'anchored' | 'box' | 'drawer_button';
   /** Sub-items (e.g., 1), 2), 3)) attached to this main question rather than split into separate questions */

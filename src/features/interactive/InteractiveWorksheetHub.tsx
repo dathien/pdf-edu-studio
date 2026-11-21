@@ -138,44 +138,65 @@ function populateTypeDefaults(
     teacherApproved: base.teacherApproved,
     sourcePdfPageNumber: base.sourcePdfPageNumber,
     printedPageLabel: base.printedPageLabel,
+    questionBounds: base.questionBounds,
+    subItems: base.subItems,
     region: base.region,
   };
   const key: TeacherQuestionKey = { questionId: id };
+  const subItemTexts = (base.subItems || [])
+    .map((s) => s.trim())
+    .filter((t) => t.length > 0);
 
   switch (type) {
     case 'mcq':
       q.mcqOptions = base.mcqOptions?.length
         ? base.mcqOptions
-        : [
-            { id: 'A', label: 'A', text: 'Phương án A' },
-            { id: 'B', label: 'B', text: 'Phương án B' },
-            { id: 'C', label: 'C', text: 'Phương án C' },
-            { id: 'D', label: 'D', text: 'Phương án D' },
-          ];
-      key.mcqCorrectId = 'A';
+        : subItemTexts.length >= 2
+          ? subItemTexts.slice(0, 6).map((txt, idx) => {
+              const lbl = String.fromCharCode(65 + idx);
+              return { id: lbl, label: lbl, text: txt };
+            })
+          : [
+              { id: 'A', label: 'A', text: 'Phương án A' },
+              { id: 'B', label: 'B', text: 'Phương án B' },
+              { id: 'C', label: 'C', text: 'Phương án C' },
+              { id: 'D', label: 'D', text: 'Phương án D' },
+            ];
+      key.mcqCorrectId = q.mcqOptions[0]?.id || 'A';
       break;
     case 'mcq_multi':
       q.mcqOptions = base.mcqOptions?.length
         ? base.mcqOptions
-        : [
-            { id: 'A', label: 'A', text: 'Phương án A' },
-            { id: 'B', label: 'B', text: 'Phương án B' },
-            { id: 'C', label: 'C', text: 'Phương án C' },
-            { id: 'D', label: 'D', text: 'Phương án D' },
-          ];
-      key.mcqMultiCorrectIds = ['A', 'C'];
+        : subItemTexts.length >= 2
+          ? subItemTexts.slice(0, 8).map((txt, idx) => {
+              const lbl = String.fromCharCode(65 + idx);
+              return { id: lbl, label: lbl, text: txt };
+            })
+          : [
+              { id: 'A', label: 'A', text: 'Phương án A' },
+              { id: 'B', label: 'B', text: 'Phương án B' },
+              { id: 'C', label: 'C', text: 'Phương án C' },
+              { id: 'D', label: 'D', text: 'Phương án D' },
+            ];
+      key.mcqMultiCorrectIds = q.mcqOptions.length >= 2 ? [q.mcqOptions[0].id] : ['A'];
       key.mcqMultiScoring = 'partial';
       break;
     case 'tf':
       q.tfStatements = base.tfStatements?.length
         ? base.tfStatements
-        : [
-            { id: 's1', label: 'a)', text: 'Phát biểu a' },
-            { id: 's2', label: 'b)', text: 'Phát biểu b' },
-            { id: 's3', label: 'c)', text: 'Phát biểu c' },
-            { id: 's4', label: 'd)', text: 'Phát biểu d' },
-          ];
-      key.tfCorrectMap = { s1: 'T', s2: 'F', s3: 'T', s4: 'F' };
+        : subItemTexts.length >= 1
+          ? subItemTexts.slice(0, 8).map((txt, idx) => ({
+              id: `s${idx + 1}`,
+              label: `${String.fromCharCode(97 + idx)})`,
+              text: txt,
+            }))
+          : [
+              { id: 's1', label: 'a)', text: 'Phát biểu a' },
+              { id: 's2', label: 'b)', text: 'Phát biểu b' },
+              { id: 's3', label: 'c)', text: 'Phát biểu c' },
+              { id: 's4', label: 'd)', text: 'Phát biểu d' },
+            ];
+      key.tfCorrectMap = Object.fromEntries(q.tfStatements.map((s) => [s.id, 'T' as const]));
       key.tfScoringMode = 'equal';
       break;
     case 'short':
@@ -414,6 +435,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
   const [firstPrintedPageInput, setFirstPrintedPageInput] = useState('');
   const [extractingPages, setExtractingPages] = useState(false);
   const [detectingQuestions, setDetectingQuestions] = useState(false);
+  const [detectionProgressText, setDetectionProgressText] = useState('');
   const [detectionNotes, setDetectionNotes] = useState<string[]>([]);
   const [selectedAuthorQId, setSelectedAuthorQId] = useState<string | null>(null);
   const [editingQuestionSnapshot, setEditingQuestionSnapshot] = useState<{
@@ -1000,6 +1022,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
   const handleRunPdfQuestionDetection = async (forceStageConfirm = false) => {
     if (!authorPdfBytes || !authorWorksheet) return;
     setDetectingQuestions(true);
+    setDetectionProgressText('Đang đọc văn bản và bố cục trang PDF...');
     setAuthorActionAlert(null);
     setPendingRedetect(null);
     try {
@@ -1008,6 +1031,8 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       const result = await detectQuestionsFromPdfPages(authorPdfBytes, {
         sourcePdfPages,
         printedPageOffset: offset,
+        enableOcrFallback: true,
+        onProgress: (msg) => setDetectionProgressText(msg),
       });
 
       const hasExistingQuestions = authorWorksheet.questions.length > 0;
@@ -1076,6 +1101,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       );
     } finally {
       setDetectingQuestions(false);
+      setDetectionProgressText('');
     }
   };
 
@@ -1179,16 +1205,59 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
     if (!existing) return;
     if (existing.type === nextType && existing.classificationStatus !== 'unclassified') return;
     const { question: converted, key: freshKey } = populateTypeDefaults(existing, nextType);
+    const wasUnclassified = existing.classificationStatus === 'unclassified';
+
+    // When converting an unclassified question, compute a clean non-covering region
+    // rather than leaving it squeezed on the right margin.
+    let nextRegion = converted.region;
+    let nextOverlayMode: InteractiveQuestion['overlayMode'] =
+      nextType === 'essay' || nextType === 'short'
+        ? existing.overlayMode === 'drawer_button'
+          ? 'drawer_button'
+          : 'box'
+        : 'box';
+
+    if (wasUnclassified) {
+      const qb = existing.questionBounds;
+      if (nextType === 'essay' || nextType === 'short') {
+        nextOverlayMode = 'drawer_button';
+        nextRegion = {
+          pageIndex: existing.region.pageIndex,
+          x: 0.72,
+          y: qb ? Math.min(0.91, Math.max(0.03, qb.y)) : existing.region.y,
+          width: 0.24,
+          height: 0.048,
+        };
+      } else if (qb) {
+        const defaultH =
+          nextType === 'matching'
+            ? 0.22
+            : nextType === 'tf'
+              ? 0.16
+              : nextType === 'ordering' || nextType === 'reading'
+                ? 0.18
+                : nextType === 'drawing'
+                  ? 0.2
+                  : 0.12;
+        nextRegion = {
+          pageIndex: qb.pageIndex,
+          x: Math.max(0.05, Math.min(0.24, qb.x)),
+          y: Math.min(Math.max(0.04, 0.94 - defaultH), qb.y + qb.height + 0.008),
+          width: Math.max(0.64, Math.min(0.88, qb.width)),
+          height: defaultH,
+        };
+      }
+    }
+
     const finalized: InteractiveQuestion = {
       ...converted,
+      region: nextRegion,
       teacherModified: true,
+      needsReview: false,
       classificationStatus: 'classified',
-      overlayMode:
-        nextType === 'essay' || nextType === 'short'
-          ? existing.overlayMode === 'drawer_button'
-            ? 'drawer_button'
-            : 'box'
-          : 'box',
+      unclassifiedReason: undefined,
+      suggestedTypes: undefined,
+      overlayMode: nextOverlayMode,
     };
     setAuthorWorksheet({
       ...authorWorksheet,
@@ -1221,17 +1290,31 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
 
   const approveAllAuthorQuestions = () => {
     if (!authorWorksheet) return;
+    const unclassifiedCount = authorWorksheet.questions.filter(
+      (q) => q.classificationStatus === 'unclassified'
+    ).length;
     setAuthorWorksheet({
       ...authorWorksheet,
       updatedAt: Date.now(),
-      questions: authorWorksheet.questions.map((q) => ({
-        ...q,
-        teacherApproved: true,
-        needsReview: false,
-      })),
+      questions: authorWorksheet.questions.map((q) =>
+        q.classificationStatus === 'unclassified'
+          ? q
+          : {
+              ...q,
+              teacherApproved: true,
+              needsReview: false,
+            }
+      ),
     });
     setAuthorActionAlert(null);
-    notify('Đã đánh dấu kiểm tra xong tất cả câu hỏi.', 'success');
+    if (unclassifiedCount > 0) {
+      notify(
+        `Đã kiểm tra các câu đã xác định dạng. Còn ${unclassifiedCount} câu chưa xác định dạng cần thầy cô chọn dạng bài.`,
+        'info'
+      );
+    } else {
+      notify('Đã đánh dấu kiểm tra xong tất cả câu hỏi.', 'success');
+    }
   };
 
   const saveTeacherMasterLocally = useCallback(
@@ -2627,7 +2710,8 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
 
                         {detectingQuestions && (
                           <div className="rounded-xl bg-teal-50 border border-teal-200 p-4 text-[16px] text-[#164E63] font-medium">
-                            Đang tìm câu hỏi trong tài liệu. Thầy cô vui lòng chờ...
+                            {detectionProgressText ||
+                              'Đang tìm câu hỏi trong tài liệu. Thầy cô vui lòng chờ...'}
                           </div>
                         )}
 
@@ -3012,16 +3096,20 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                               </button>
                             </div>
                           ) : (
-                            <div className="space-y-2">
+                            <div className="space-y-2.5">
                               {authorWorksheet.questions.map((q) => {
                                 const isUnclassified = q.classificationStatus === 'unclassified';
                                 const needsCheck = !q.teacherApproved || isUnclassified;
+                                const quickSuggestions =
+                                  isUnclassified && q.suggestedTypes && q.suggestedTypes.length > 0
+                                    ? q.suggestedTypes.slice(0, 3)
+                                    : isUnclassified
+                                      ? (['mcq', 'matching', 'essay'] as InteractiveQuestionType[])
+                                      : [];
                                 return (
-                                  <button
+                                  <div
                                     key={q.id}
-                                    type="button"
-                                    onClick={() => openQuestionForEdit(q.id)}
-                                    className={`w-full text-left rounded-xl border p-3.5 transition-colors cursor-pointer space-y-1.5 ${
+                                    className={`w-full text-left rounded-xl border p-3.5 transition-colors space-y-2 ${
                                       isUnclassified
                                         ? 'border-amber-400 bg-amber-50/75 hover:border-amber-600'
                                         : needsCheck
@@ -3029,40 +3117,74 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                                           : 'border-slate-200 bg-white hover:border-[#087F70]'
                                     }`}
                                   >
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span className="font-bold text-[16px] text-[#164E63] truncate">
-                                        {q.code} ·{' '}
-                                        {isUnclassified
-                                          ? 'Chưa xác định dạng'
-                                          : QUESTION_TYPE_META[q.type].shortLabel}
-                                      </span>
-                                      <span className="text-[15px] font-bold text-slate-700 shrink-0">
-                                        {q.maxPoints} điểm
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center justify-between gap-2 text-[14.5px] flex-wrap">
-                                      <span className="text-slate-600">
-                                        Trang {q.sourcePdfPageNumber ?? q.region.pageIndex + 1}
-                                        {q.subItems && q.subItems.length > 0
-                                          ? ` · ${q.subItems.length} mục con`
-                                          : ''}
-                                        {' · Nhấn để sửa'}
-                                      </span>
-                                      {isUnclassified ? (
-                                        <span className="px-2.5 py-0.5 rounded-md bg-amber-200 text-amber-950 font-bold">
-                                          Chọn dạng bài
+                                    <button
+                                      type="button"
+                                      onClick={() => openQuestionForEdit(q.id)}
+                                      className="w-full text-left cursor-pointer space-y-1.5"
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="font-bold text-[16px] text-[#164E63] truncate">
+                                          {q.code} ·{' '}
+                                          {isUnclassified
+                                            ? 'Chưa xác định dạng'
+                                            : QUESTION_TYPE_META[q.type].shortLabel}
                                         </span>
-                                      ) : q.teacherApproved ? (
-                                        <span className="px-2.5 py-0.5 rounded-md bg-emerald-100 text-emerald-900 font-bold">
-                                          Đã kiểm tra
+                                        <span className="text-[15px] font-bold text-slate-700 shrink-0">
+                                          {q.maxPoints} điểm
                                         </span>
-                                      ) : (
-                                        <span className="px-2.5 py-0.5 rounded-md bg-amber-100 text-amber-950 font-bold">
-                                          Cần kiểm tra
-                                        </span>
+                                      </div>
+                                      {isUnclassified && q.prompt && (
+                                        <div className="text-[14.5px] text-slate-800 line-clamp-2 leading-snug">
+                                          {q.prompt}
+                                        </div>
                                       )}
-                                    </div>
-                                  </button>
+                                      {isUnclassified && q.unclassifiedReason && (
+                                        <div className="text-[14px] text-amber-900 leading-snug">
+                                          {q.unclassifiedReason}
+                                        </div>
+                                      )}
+                                      <div className="flex items-center justify-between gap-2 text-[14.5px] flex-wrap">
+                                        <span className="text-slate-600">
+                                          Trang {q.sourcePdfPageNumber ?? q.region.pageIndex + 1}
+                                          {q.subItems && q.subItems.length > 0
+                                            ? ` · ${q.subItems.length} mục con`
+                                            : ''}
+                                          {' · Nhấn để sửa'}
+                                        </span>
+                                        {isUnclassified ? (
+                                          <span className="px-2.5 py-0.5 rounded-md bg-amber-200 text-amber-950 font-bold">
+                                            Chọn nhanh bên dưới
+                                          </span>
+                                        ) : q.teacherApproved ? (
+                                          <span className="px-2.5 py-0.5 rounded-md bg-emerald-100 text-emerald-900 font-bold">
+                                            Đã kiểm tra
+                                          </span>
+                                        ) : (
+                                          <span className="px-2.5 py-0.5 rounded-md bg-amber-100 text-amber-950 font-bold">
+                                            Cần kiểm tra
+                                          </span>
+                                        )}
+                                      </div>
+                                    </button>
+                                    {quickSuggestions.length > 0 && (
+                                      <div className="pt-1.5 border-t border-amber-200 flex flex-wrap gap-1.5">
+                                        {quickSuggestions.map((st) => (
+                                          <button
+                                            key={st}
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleChangeAuthorQuestionType(q.id, st);
+                                              openQuestionForEdit(q.id);
+                                            }}
+                                            className="min-h-[40px] px-3 rounded-lg bg-white hover:bg-[#E6F1EF] border border-amber-400 hover:border-[#087F70] text-[#164E63] font-bold text-[14.5px] cursor-pointer"
+                                          >
+                                            Chuyển sang: {QUESTION_TYPE_META[st].shortLabel}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
                                 );
                               })}
                             </div>

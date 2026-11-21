@@ -1,5 +1,6 @@
 import { PDFDocument } from 'pdf-lib';
 import { openPdfDocument } from '../../engines/pdf/pdfEngine';
+import { getPdfjsLib } from '../../engines/pdf/pdfjsConfig';
 import {
   QUESTION_TYPE_META,
   type FillBlankSlot,
@@ -80,6 +81,33 @@ export interface PageSelectionValidationResult {
   errorMessage?: string;
 }
 
+export interface PdfGeomBox {
+  x: number;
+  y: number; // top-down PDF points
+  width: number;
+  height: number;
+}
+
+export interface PdfGeomLine {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export interface ExtractedPageGeometry {
+  /** Small vector squares (7..28pt) drawn on the PDF page — real checkboxes! */
+  checkboxes: PdfGeomBox[];
+  /** Horizontal vector lines (writing lines, inline blanks, table borders) */
+  horizontalLines: PdfGeomLine[];
+  /** Vertical vector lines (table column dividers) */
+  verticalLines: PdfGeomLine[];
+  /** Larger vector boxes/cards/table cells (matching cards, frames) */
+  boxes: PdfGeomBox[];
+  /** Embedded illustration/image bounding boxes on the page */
+  images: PdfGeomBox[];
+}
+
 export interface ExtractedPageInput {
   pageIndex: number;
   sourcePdfPageNumber: number;
@@ -88,6 +116,8 @@ export interface ExtractedPageInput {
   height: number;
   textItemCount: number;
   lines: TextLineBlock[];
+  geometry?: ExtractedPageGeometry;
+  usedOcr?: boolean;
 }
 
 /**
@@ -265,6 +295,30 @@ export async function extractSelectedPagesPdf(
   return outDoc.save();
 }
 
+// ============================================================================
+// VIETNAMESE UNICODE NORMALIZATION & GAP-AWARE LINE RECONSTRUCTION
+// ============================================================================
+
+const PUA_CHECKBOX_RE = /[\uF06F\uF071\uF0A8\uF0FE\u25A1\u25A2\u25FB\u25FD\u274F\u2751\u2610\u2611\u2612]/g;
+
+export function cleanPdfTokenText(raw: string): string {
+  return raw
+    .normalize('NFC')
+    .replace(/[\u00A0\u2007\u202F]/g, ' ')
+    .replace(/[\u200B\u200C\u200D\u00AD\uFEFF]/g, '')
+    .replace(PUA_CHECKBOX_RE, '☐');
+}
+
+export function foldVietnamese(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[đĐ]/g, 'd')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function isLineAllCaps(text: string): boolean {
   const letters = text.replace(/[^A-Za-zÀ-ỹ]/g, '');
   if (letters.length < 3) return false;
@@ -275,32 +329,117 @@ function clampNorm(v: number, min = 0.01, max = 0.99): number {
   return Number(Math.max(min, Math.min(max, v)).toFixed(4));
 }
 
+/**
+ * Reconstructs natural Vietnamese words from PDF.js text items by measuring actual
+ * horizontal PDF-point gaps instead of blindly inserting spaces between split glyphs.
+ * Fixes split diacritics/kerning like ["Đ", "ánh", " d", "ấu"] -> "Đánh dấu" and ["A", "."] -> "A.".
+ */
+export function joinLineItemsWithGap(items: TextLineItem[]): string {
+  if (items.length === 0) return '';
+  let out = items[0].str;
+  for (let i = 1; i < items.length; i++) {
+    const prev = items[i - 1];
+    const cur = items[i];
+    const gap = cur.x - (prev.x + prev.width);
+    const refSize = Math.min(prev.height, cur.height) || 11;
+    const prevEndsSpace = /\s$/.test(out);
+    const curStartsSpace = /^\s/.test(cur.str);
+    const curStartsClosingPunct = /^[\.,;:!\?\)\]\}]/.test(cur.str);
+    const prevEndsOpenPunct = /[\(\[\{]$/.test(out);
+
+    if (prevEndsSpace || curStartsSpace) {
+      out += cur.str;
+    } else if (curStartsClosingPunct && gap <= refSize * 0.35) {
+      out += cur.str;
+    } else if (prevEndsOpenPunct && gap <= refSize * 0.35) {
+      out += cur.str;
+    } else if (gap > Math.max(1.15, refSize * 0.145)) {
+      out += ' ' + cur.str;
+    } else if (/[,;:?!\)]$/.test(out) && /^[A-Za-zÀ-ỹ0-9☐□▢◯○]/.test(cur.str) && gap > 0.35) {
+      out += ' ' + cur.str;
+    } else if (/^[☐□▢◯○]$/.test(out.slice(-1)) || /^[☐□▢◯○]/.test(cur.str)) {
+      out += ' ' + cur.str;
+    } else {
+      out += cur.str;
+    }
+  }
+  return out.replace(/\s+/g, ' ').trim();
+}
+
+function mergeLeftNumberBadges(lines: TextLineBlock[], pageWidth: number): TextLineBlock[] {
+  if (lines.length < 2) return lines;
+  const merged: TextLineBlock[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const cur = lines[i];
+    const next = lines[i + 1];
+    const curTrim = cur.text.trim();
+    const isShortQuestionBadge =
+      cur.x < pageWidth * 0.22 &&
+      cur.width < 68 &&
+      /^(?:(?:C[âa]u|B[àa]i)\s*)?\d{1,2}[\.\):]?$/i.test(curTrim);
+
+    if (
+      isShortQuestionBadge &&
+      next &&
+      next.x > cur.x + Math.min(cur.width, 10) &&
+      Math.abs((cur.y + cur.height / 2) - (next.y + next.height / 2)) <= Math.max(13, cur.height * 0.85)
+    ) {
+      const combinedItems = [...cur.items, ...next.items].sort((a, b) => a.x - b.x);
+      const minX = Math.min(cur.x, next.x);
+      const maxX = Math.max(cur.x + cur.width, next.x + next.width);
+      const minY = Math.min(cur.y, next.y);
+      const maxBottom = Math.max(cur.y + cur.height, next.y + next.height);
+      const text = joinLineItemsWithGap(combinedItems);
+      const width = Math.max(10, maxX - minX);
+      const centerDist = Math.abs(minX + width / 2 - pageWidth / 2);
+      merged.push({
+        text,
+        x: minX,
+        y: minY,
+        width,
+        height: Math.max(10, maxBottom - minY),
+        fontSize: Math.max(cur.fontSize, next.fontSize),
+        isCentered: centerDist < pageWidth * 0.14 && width < pageWidth * 0.78,
+        isAllCaps: isLineAllCaps(text),
+        items: combinedItems,
+      });
+      i += 2;
+      continue;
+    }
+    merged.push(cur);
+    i += 1;
+  }
+  return merged;
+}
+
 export function groupTextItemsIntoLines(
   rawItems: Array<{ str: string; transform: number[]; width?: number; height?: number }>,
   pageHeight: number,
   pageWidth = 595
 ): TextLineBlock[] {
   const positioned = rawItems
-    .filter((it) => typeof it.str === 'string' && it.str.trim().length > 0)
+    .filter((it) => typeof it.str === 'string' && cleanPdfTokenText(it.str).trim().length > 0)
     .map((it) => {
+      const cleaned = cleanPdfTokenText(it.str);
       const x = Number(it.transform?.[4] || 0);
       const yBottom = Number(it.transform?.[5] || 0);
       const scaleY = Math.hypot(Number(it.transform?.[2] || 0), Number(it.transform?.[3] || 0));
       const h = Math.max(8, Math.abs(Number(it.height || scaleY || 11)));
-      const w = Math.max(4, Number(it.width || it.str.length * h * 0.48));
+      const w = Math.max(2, Number(it.width || cleaned.length * h * 0.45));
       const yTop = Math.max(0, pageHeight - yBottom - h);
-      return { str: it.str, x, y: yTop, width: w, height: h };
+      return { str: cleaned, x, y: yTop, width: w, height: h };
     })
     .sort((a, b) => (Math.abs(a.y - b.y) > 5.5 ? a.y - b.y : a.x - b.x));
 
   const lines: TextLineBlock[] = [];
   for (const item of positioned) {
     const last = lines[lines.length - 1];
-    const yTol = Math.min(8, Math.max(5, Math.min(last?.height || 11, item.height) * 0.55));
+    const yTol = Math.min(8.5, Math.max(5, Math.min(last?.height || 11, item.height) * 0.58));
     if (last && Math.abs(last.y - item.y) <= yTol) {
       last.items.push(item);
       last.items.sort((a, b) => a.x - b.x);
-      last.text = last.items.map((i) => i.str).join(' ').replace(/\s+/g, ' ').trim();
+      last.text = joinLineItemsWithGap(last.items);
       const minX = Math.min(...last.items.map((i) => i.x));
       const maxX = Math.max(...last.items.map((i) => i.x + i.width));
       last.x = minX;
@@ -326,7 +465,7 @@ export function groupTextItemsIntoLines(
       });
     }
   }
-  return lines;
+  return mergeLeftNumberBadges(lines, pageWidth);
 }
 
 function detectPrintedPageNumber(lines: TextLineBlock[], pageHeight: number): string | undefined {
@@ -354,7 +493,7 @@ const EXPLICIT_MAIN_QUESTION_RE =
 const BAI_NUMBER_RE = /^(B[àa]i\s+\d+[a-z]?)(?:\s*[:\.\-–)]|\s|$)/i;
 
 const EXERCISE_VERB_RE =
-  /\b(t[íi]nh|gi[ảa]i|t[ìi]m|ch[ứu]ng\s+minh|n[ốo]i|ch[ọo]n|[đd]i[ềe]n|khoanh|vi[ếe]t|v[ẽe]|h[ãa]y|em\s+h[ãa]y|[đd][áa]nh\s+d[ấa]u|s[ắa]p\s+x[ếe]p|x[áa]c\s+[đd][ịi]nh)\b/i;
+  /(?:^|[\s,.;:!?])(tinh|giai|tim|chung\s+minh|noi|chon|dien|khoanh|viet|ve|hay|em\s+hay|danh\s+dau|sap\s+xep|xac\s+dinh|ghep|neu|ke|mo\s+ta|quan\s+sat|tra\s+loi|hoan\s+thanh|to\s+mau)(?=$|[\s,.;:!?])/i;
 
 const SUB_ITEM_MARKER_RE = /^(?:(\d{1,2})\s*[\)\.]|([a-hA-H])\s*[\)\.]|[•\-–—▪◦☐□▢◯○])/;
 
@@ -382,6 +521,8 @@ function isBaiLineALessonHeading(
     .replace(/^[:\.\-–\s]+/, '')
     .trim();
 
+  const restFolded = foldVietnamese(rest);
+
   // 1. Standalone "Bài 1" / "BÀI 1" with no exercise body -> ALWAYS a lesson heading!
   if (rest.length === 0) return true;
 
@@ -391,13 +532,13 @@ function isBaiLineALessonHeading(
   // 3. Large font or centered title or ALL CAPS title -> lesson heading
   if (ln.fontSize >= medianFont * 1.18 || ln.isCentered || ln.isAllCaps) return true;
 
-  // 4. Appears in upper 22% of page and followed by an ALL-CAPS/large subtitle, or has no exercise verb
-  if (ln.y < pageHeight * 0.25 && (!EXERCISE_VERB_RE.test(rest) || (nextLine && nextLine.isAllCaps))) {
+  // 4. Appears in upper 25% of page and followed by an ALL-CAPS/large subtitle, or has no exercise verb
+  if (ln.y < pageHeight * 0.25 && (!EXERCISE_VERB_RE.test(restFolded) || (nextLine && nextLine.isAllCaps))) {
     return true;
   }
 
   // 5. Short title without exercise action verbs (e.g. "Bài 1. Thông tin và quyết định")
-  if (rest.length <= 75 && !EXERCISE_VERB_RE.test(rest) && !/\?/.test(rest)) {
+  if (rest.length <= 75 && !EXERCISE_VERB_RE.test(restFolded) && !/\?/.test(rest)) {
     return true;
   }
 
@@ -425,6 +566,8 @@ function normalizeQuestionCode(code: string): string {
 interface ClassificationOutput {
   type: InteractiveQuestionType;
   classificationStatus: 'classified' | 'unclassified';
+  unclassifiedReason?: string;
+  suggestedTypes?: InteractiveQuestionType[];
   overlayMode: 'anchored' | 'box' | 'drawer_button';
   matchingMode?: 'line' | 'drag';
   needsReview: boolean;
@@ -438,20 +581,35 @@ interface ClassificationOutput {
   contentBottomY: number;
 }
 
-function findStemEndIndex(lines: TextLineBlock[]): number {
+function findStemEndIndex(lines: TextLineBlock[], clusterCheckboxes: PdfGeomBox[] = []): number {
   if (lines.length <= 1) return 0;
   let endIdx = 0;
   for (let i = 1; i < lines.length; i++) {
     const t = lines[i].text.trim();
+    const tf = foldVietnamese(t);
+    const prevText = lines[i - 1].text.trim();
+    // Stop stem before a line aligned with a vector checkbox (option row!)
+    const lineMidY = lines[i].y + lines[i].height / 2;
+    const hasAlignedCheckbox = clusterCheckboxes.some(
+      (cb) => Math.abs(cb.y + cb.height / 2 - lineMidY) <= Math.max(10, lines[i].height * 0.75)
+    );
+    if (hasAlignedCheckbox) {
+      break;
+    }
+    // If previous line ended with ':' and there are multiple body lines below, stem has ended
+    if (prevText.endsWith(':') && lines.length >= 3) {
+      break;
+    }
     // Stop stem before options, sub-items, checkboxes, tables, or blank lines
     if (
-      /^(?:[A-D][\.\)]|\d+[\)\.]|[a-d][\)\.]|[☐□▢◯○]|\[ ?\]|\( ?\)|c[ộo]t\s*[ab12]|st+t\b|n[ộo]i\s+dung\b|ph[áa]t\s+bi[ểe]u\b)/i.test(
-        t
+      /^(?:[A-D][\.\)]|\d+[\)\.]|[a-d][\)\.]|[☐□▢◯○]|\[ ?\]|\( ?\)|cot\s*[ab12]|stt\b|noi\s+dung\b|phat\s+bieu\b|thong\s+tin\b|quyet\s+dinh\b)/i.test(
+        tf
       ) ||
+      /^(?:[A-D][\.\)]|\d+[\)\.]|[a-d][\)\.]|[☐□▢◯○]|\[ ?\]|\( ?\))/.test(t) ||
       BLANK_WRITING_LINE_RE.test(t) ||
-      (/(?:^|[\s/|(\[])(?:đúng|đ)(?=$|[\s/|)\]])/i.test(t) &&
-        /(?:^|[\s/|(\[])(?:sai|s)(?=$|[\s/|)\]])/i.test(t) &&
-        t.length < 48)
+      (/(?:^|[\s/|(\[])(?:dung|d)(?=$|[\s/|)\]])/i.test(tf) &&
+        /(?:^|[\s/|(\[])(?:sai|s)(?=$|[\s/|)\]])/i.test(tf) &&
+        t.length < 56)
     ) {
       break;
     }
@@ -463,7 +621,7 @@ function findStemEndIndex(lines: TextLineBlock[]): number {
         const gap = lines[i].items[k].x - (prev.x + prev.width);
         if (gap > maxGap) maxGap = gap;
       }
-      if (maxGap > 70) break;
+      if (maxGap > 58) break;
     }
     // Only include wrapped stem lines right below previous stem line
     if (lines[i].y - (lines[i - 1].y + lines[i - 1].height) > 22) break;
@@ -494,7 +652,7 @@ function findBestColumnSplitX(bodyLines: TextLineBlock[], pageWidth: number): nu
       const prevEnd = prev.x + prev.width;
       const gap = cur.x - prevEnd;
       const mid = (prevEnd + cur.x) / 2;
-      if (gap >= 24 && mid >= pageWidth * 0.28 && mid <= pageWidth * 0.72) {
+      if (gap >= 22 && mid >= pageWidth * 0.25 && mid <= pageWidth * 0.75) {
         gaps.push({ mid, width: gap });
       }
     }
@@ -508,7 +666,9 @@ function findBestColumnSplitX(bodyLines: TextLineBlock[], pageWidth: number): nu
 function extractMatchingColumns(
   bodyLines: TextLineBlock[],
   pageWidth: number,
-  pageHeight: number
+  pageHeight: number,
+  clusterImages: PdfGeomBox[],
+  clusterBoxes: PdfGeomBox[]
 ): { itemsA: MatchingItem[]; itemsB: MatchingItem[]; hasFullAnchors: boolean } {
   const splitX = findBestColumnSplitX(bodyLines, pageWidth);
   const leftRows: Array<{ text: string; minX: number; maxX: number; topY: number; bottomY: number }> = [];
@@ -519,15 +679,28 @@ function extractMatchingColumns(
     const leftItems = ln.items.filter((it) => it.x + it.width * 0.35 < splitX);
     const rightItems = ln.items.filter((it) => it.x + it.width * 0.35 >= splitX);
 
-    const leftStr = leftItems.map((it) => it.str).join(' ').replace(/\s+/g, ' ').trim();
-    const rightStr = rightItems.map((it) => it.str).join(' ').replace(/\s+/g, ' ').trim();
+    const leftStr = joinLineItemsWithGap(leftItems);
+    const rightStr = joinLineItemsWithGap(rightItems);
+    const leftFold = foldVietnamese(leftStr);
+    const rightFold = foldVietnamese(rightStr);
 
-    if (leftStr && !/^(?:c[ộo]t\s*(?:a|1|tr[áa]i|b[êe]n\s*tr[áa]i)|th[ôo]ng\s+tin\s*$|t[ìi]nh\s+hu[ốo]ng\s*$)/i.test(leftStr)) {
+    const bothColsPresent = Boolean(leftStr) && Boolean(rightStr);
+
+    if (
+      leftStr &&
+      !/^(?:cot\s*(?:a|1|trai|ben\s*trai)|thong\s+tin\s*$|tinh\s+huong\s*$|cot\s+thong\s+tin\s*$)/i.test(leftFold)
+    ) {
       const minX = Math.min(...leftItems.map((i) => i.x));
       const maxX = Math.max(...leftItems.map((i) => i.x + i.width));
       const prev = leftRows[leftRows.length - 1];
       const startsNewItem = SUB_ITEM_MARKER_RE.test(leftStr);
-      if (prev && !startsNewItem && ln.y - prev.bottomY <= 16) {
+      const yGap = prev ? ln.y - prev.bottomY : 999;
+      const looksLikeWrappedContinuation =
+        Boolean(prev) &&
+        !startsNewItem &&
+        ((!bothColsPresent && yGap <= 16) ||
+          (bothColsPresent && (yGap <= 5 || /^[a-zà-ỹ]/.test(leftStr))));
+      if (prev && looksLikeWrappedContinuation) {
         prev.text = `${prev.text} ${leftStr}`.trim();
         prev.maxX = Math.max(prev.maxX, maxX);
         prev.bottomY = Math.max(prev.bottomY, ln.y + ln.height);
@@ -536,12 +709,21 @@ function extractMatchingColumns(
       }
     }
 
-    if (rightStr && !/^(?:c[ộo]t\s*(?:b|2|ph[ảa]i|b[êe]n\s*ph[ảa]i)|quy[ếe]t\s+[đd][ịi]nh\s*$|k[ếe]t\s+qu[ảa]\s*$)/i.test(rightStr)) {
+    if (
+      rightStr &&
+      !/^(?:cot\s*(?:b|2|phai|ben\s*phai)|quyet\s+dinh\s*$|ket\s+qua\s*$|cot\s+quyet\s+dinh\s*$)/i.test(rightFold)
+    ) {
       const minX = Math.min(...rightItems.map((i) => i.x));
       const maxX = Math.max(...rightItems.map((i) => i.x + i.width));
       const prev = rightRows[rightRows.length - 1];
       const startsNewItem = SUB_ITEM_MARKER_RE.test(rightStr);
-      if (prev && !startsNewItem && ln.y - prev.bottomY <= 16) {
+      const yGap = prev ? ln.y - prev.bottomY : 999;
+      const looksLikeWrappedContinuation =
+        Boolean(prev) &&
+        !startsNewItem &&
+        ((!bothColsPresent && yGap <= 16) ||
+          (bothColsPresent && (yGap <= 5 || /^[a-zà-ỹ]/.test(rightStr))));
+      if (prev && looksLikeWrappedContinuation) {
         prev.text = `${prev.text} ${rightStr}`.trim();
         prev.minX = Math.min(prev.minX, minX);
         prev.maxX = Math.max(prev.maxX, maxX);
@@ -566,7 +748,7 @@ function extractMatchingColumns(
     id: `det-a-${idx + 1}`,
     label: r.text.replace(/^[\dA-Za-z]+[\.\)]\s*/, '').trim() || r.text,
     anchor: {
-      nx: clampNorm(leftPortX / pageWidth, 0.15, 0.56),
+      nx: clampNorm(leftPortX / pageWidth, 0.14, 0.56),
       ny: clampNorm(((r.topY + r.bottomY) / 2) / pageHeight),
       nw: clampNorm((r.maxX - r.minX) / pageWidth, 0.05, 0.45),
       nh: clampNorm((r.bottomY - r.topY) / pageHeight, 0.02, 0.16),
@@ -584,57 +766,188 @@ function extractMatchingColumns(
     },
   }));
 
-  // If left items exist (>= 2) but right column is illustrations/images (no text in right column),
-  // keep it as anchored matching with editable right-side image ports!
+  // Case 1: Both text columns found
+  if (itemsA.length >= 2 && itemsB.length >= 2) {
+    return { itemsA, itemsB, hasFullAnchors: true };
+  }
+
+  // Case 2: Left column has text (>= 2), right column has PDF images or vector cards!
   if (itemsA.length >= 2 && itemsB.length < 2) {
+    const rightObjects = [...clusterImages, ...clusterBoxes]
+      .filter((b) => b.x + b.width * 0.3 >= splitX && b.width >= 30 && b.height >= 16)
+      .sort((a, b) => a.y - b.y);
+    // Deduplicate overlapping right boxes/images
+    const dedupRight: PdfGeomBox[] = [];
+    for (const obj of rightObjects) {
+      if (!dedupRight.some((d) => Math.abs(d.y - obj.y) < 18)) {
+        dedupRight.push(obj);
+      }
+    }
+
+    if (dedupRight.length >= 2) {
+      const rightFromGeom: MatchingItem[] = dedupRight.slice(0, 8).map((box, idx) => ({
+        id: `det-b-${idx + 1}`,
+        label: `Hình / Mục ${String.fromCharCode(65 + idx)}`,
+        anchor: {
+          nx: clampNorm(Math.max(splitX + 6, box.x - 6) / pageWidth, 0.46, 0.88),
+          ny: clampNorm((box.y + box.height / 2) / pageHeight),
+        },
+      }));
+      return { itemsA, itemsB: rightFromGeom, hasFullAnchors: true };
+    }
+
+    // Fallback when right column is pure rasterized illustrations inside a single image
     const synthesizedB: MatchingItem[] = itemsA.map((a, idx) => ({
       id: `det-b-${idx + 1}`,
       label: `Hình / Mục ${String.fromCharCode(65 + idx)}`,
       anchor: {
-        nx: clampNorm(Math.max(0.62, (splitX + 24) / pageWidth), 0.55, 0.82),
+        nx: clampNorm(Math.max(0.62, (splitX + 24) / pageWidth), 0.54, 0.84),
         ny: a.anchor!.ny,
       },
     }));
     return { itemsA, itemsB: synthesizedB, hasFullAnchors: true };
   }
 
+  // Case 3: Pure vector cards / images on left & right columns (e.g., matching images with images or cards)
+  const allCards = [...clusterImages, ...clusterBoxes]
+    .filter((b) => b.width >= 36 && b.height >= 18 && b.width < pageWidth * 0.6)
+    .sort((a, b) => a.y - b.y);
+  const leftCards = allCards.filter((b) => b.x + b.width / 2 < pageWidth * 0.48);
+  const rightCards = allCards.filter((b) => b.x + b.width / 2 >= pageWidth * 0.52);
+  if (leftCards.length >= 2 && rightCards.length >= 2) {
+    const geomA: MatchingItem[] = leftCards.slice(0, 8).map((box, idx) => ({
+      id: `det-a-${idx + 1}`,
+      label: `Mục ${idx + 1}`,
+      anchor: {
+        nx: clampNorm((box.x + box.width + 6) / pageWidth, 0.15, 0.54),
+        ny: clampNorm((box.y + box.height / 2) / pageHeight),
+      },
+    }));
+    const geomB: MatchingItem[] = rightCards.slice(0, 8).map((box, idx) => ({
+      id: `det-b-${idx + 1}`,
+      label: `Mục ${String.fromCharCode(65 + idx)}`,
+      anchor: {
+        nx: clampNorm((box.x - 6) / pageWidth, 0.46, 0.88),
+        ny: clampNorm((box.y + box.height / 2) / pageHeight),
+      },
+    }));
+    return { itemsA: geomA, itemsB: geomB, hasFullAnchors: true };
+  }
+
+  // Case 4: Horizontal 2-row matching (top row items matched down to bottom row items!)
+  if (bodyLines.length >= 2) {
+    const topLine = bodyLines[0];
+    const bottomLine = bodyLines[bodyLines.length - 1];
+    if (
+      topLine !== bottomLine &&
+      topLine.items.length >= 2 &&
+      bottomLine.items.length >= 2 &&
+      bottomLine.y - topLine.y >= 34
+    ) {
+      const topSegments = splitLineIntoHorizontalCells(topLine, 26);
+      const bottomSegments = splitLineIntoHorizontalCells(bottomLine, 26);
+      if (topSegments.length >= 2 && bottomSegments.length >= 2) {
+        const rowA: MatchingItem[] = topSegments.slice(0, 6).map((seg, idx) => ({
+          id: `det-a-${idx + 1}`,
+          label: seg.text,
+          anchor: {
+            nx: clampNorm((seg.x + seg.width / 2) / pageWidth, 0.08, 0.92),
+            ny: clampNorm((topLine.y + topLine.height + 8) / pageHeight),
+          },
+        }));
+        const rowB: MatchingItem[] = bottomSegments.slice(0, 6).map((seg, idx) => ({
+          id: `det-b-${idx + 1}`,
+          label: seg.text,
+          anchor: {
+            nx: clampNorm((seg.x + seg.width / 2) / pageWidth, 0.08, 0.92),
+            ny: clampNorm((bottomLine.y - 8) / pageHeight),
+          },
+        }));
+        return { itemsA: rowA, itemsB: rowB, hasFullAnchors: true };
+      }
+    }
+  }
+
   return {
     itemsA,
     itemsB,
-    hasFullAnchors: itemsA.length >= 2 && itemsB.length >= 2,
+    hasFullAnchors: false,
   };
+}
+
+function splitLineIntoHorizontalCells(
+  ln: TextLineBlock,
+  minGap: number
+): Array<{ text: string; x: number; width: number }> {
+  if (ln.items.length === 0) return [];
+  const groups: TextLineItem[][] = [[ln.items[0]]];
+  for (let i = 1; i < ln.items.length; i++) {
+    const prev = ln.items[i - 1];
+    const cur = ln.items[i];
+    if (cur.x - (prev.x + prev.width) >= minGap) {
+      groups.push([cur]);
+    } else {
+      groups[groups.length - 1].push(cur);
+    }
+  }
+  return groups
+    .map((g) => {
+      const minX = Math.min(...g.map((i) => i.x));
+      const maxX = Math.max(...g.map((i) => i.x + i.width));
+      return { text: joinLineItemsWithGap(g), x: minX, width: maxX - minX };
+    })
+    .filter((s) => s.text.length > 0);
 }
 
 function extractMcqOptionsWithAnchors(
   cluster: QuestionCluster,
   stemEndIdx: number,
   pageWidth: number,
-  pageHeight: number
+  pageHeight: number,
+  clusterCheckboxes: PdfGeomBox[]
 ): Array<{ id: string; label: string; text: string; anchor?: PdfPointAnchor }> {
   const options: Array<{ id: string; label: string; text: string; anchor?: PdfPointAnchor }> = [];
   const bodyLines = cluster.lines.slice(stemEndIdx + 1);
   const scanLines = bodyLines.length > 0 ? bodyLines : cluster.lines;
 
-  // Pattern A: Explicit A. / B. / C. / D. or A) / B) / C) / D) (supports 1 or 2 options on same line)
+  // Pattern A: Explicit A. / B. / C. / D. or A) / B) / C) / D) (supports 1, 2, or 4 options on same line)
   for (const ln of scanLines) {
-    const matches = [...ln.text.matchAll(/(?:^|\s)([☐□▢◯○]\s*)?([A-D])[\.\)]\s*([^\n]+?)(?=(?:\s+[☐□▢◯○]?\s*[A-D][\.\)]\s)|$)/g)];
+    const matches = [
+      ...ln.text.matchAll(
+        /(?:^|\s)([☐□▢◯○]\s*)?([A-D])[\.\)]\s*([^\n]+?)(?=(?:\s+[☐□▢◯○]?\s*[A-D][\.\)]\s)|$)/g
+      ),
+    ];
     if (matches.length > 0) {
       for (const m of matches) {
         const letter = m[2].toUpperCase();
         const optText = m[3].replace(/^[☐□▢◯○]\s*/, '').trim();
-        // Find exact item X in line items
         const tokenItem = ln.items.find((it) =>
+          new RegExp(`^(?:[☐□▢◯○]\\s*)?${letter}[\\.\\)]?$`).test(it.str.trim()) ||
           new RegExp(`^(?:[☐□▢◯○]\\s*)?${letter}[\\.\\)]`).test(it.str.trim())
         );
-        const anchorX = tokenItem ? Math.max(14, tokenItem.x - 16) : Math.max(14, ln.x - 16);
+        // Check if there is an actual PDF vector checkbox right before this option!
+        const lnMidY = ln.y + ln.height / 2;
+        const nearCb = clusterCheckboxes.find(
+          (cb) =>
+            Math.abs(cb.y + cb.height / 2 - lnMidY) <= 14 &&
+            tokenItem &&
+            cb.x <= tokenItem.x + 8 &&
+            tokenItem.x - (cb.x + cb.width) <= 28
+        );
+        const anchorX = nearCb
+          ? nearCb.x + nearCb.width / 2
+          : tokenItem
+            ? Math.max(14, tokenItem.x - 16)
+            : Math.max(14, ln.x - 16);
+        const anchorY = nearCb ? nearCb.y + nearCb.height / 2 : lnMidY;
         if (!options.some((o) => o.id === letter)) {
           options.push({
             id: letter,
             label: letter,
             text: optText || `Phương án ${letter}`,
             anchor: {
-              nx: clampNorm(anchorX / pageWidth, 0.02, 0.94),
-              ny: clampNorm((ln.y + ln.height / 2) / pageHeight),
+              nx: clampNorm(anchorX / pageWidth, 0.02, 0.95),
+              ny: clampNorm(anchorY / pageHeight),
             },
           });
         }
@@ -646,45 +959,116 @@ function extractMcqOptionsWithAnchors(
     return options.slice(0, 6);
   }
 
-  // Pattern B: Checkbox symbols (☐, □, ▢, ◯, ○, [ ], ( )) before option text
+  // Pattern B: Unicode / PUA Checkbox symbols (☐, □, ▢, ◯, ○, [ ], ( )) — supports 1 or 2 columns per line!
   const cbOptions: Array<{ id: string; label: string; text: string; anchor?: PdfPointAnchor }> = [];
   for (const ln of bodyLines) {
-    const m = ln.text.match(/^([☐□▢◯○]|\[ ?\]|\( ?\))\s*(.+)$/);
-    if (m) {
-      const idx = cbOptions.length;
-      const letter = String.fromCharCode(65 + idx);
-      const firstItem = ln.items[0];
-      const anchorX = firstItem ? firstItem.x + Math.min(8, firstItem.width / 2) : ln.x + 6;
-      cbOptions.push({
-        id: letter,
-        label: letter,
-        text: m[2].trim(),
-        anchor: {
-          nx: clampNorm(anchorX / pageWidth, 0.02, 0.94),
-          ny: clampNorm((ln.y + ln.height / 2) / pageHeight),
-        },
-      });
+    const cells = splitLineIntoHorizontalCells(ln, 24);
+    for (const cell of cells) {
+      const m = cell.text.match(/^([☐□▢◯○]|\[ ?\]|\( ?\))\s*(.+)$/);
+      if (m) {
+        const idx = cbOptions.length;
+        const letter = String.fromCharCode(65 + idx);
+        const anchorX = cell.x + 7;
+        cbOptions.push({
+          id: letter,
+          label: letter,
+          text: m[2].trim(),
+          anchor: {
+            nx: clampNorm(anchorX / pageWidth, 0.02, 0.95),
+            ny: clampNorm((ln.y + ln.height / 2) / pageHeight),
+          },
+        });
+      }
     }
   }
   if (cbOptions.length >= 2) {
     return cbOptions.slice(0, 6);
   }
 
-  // Pattern C: Prompt explicitly mentions checkbox/empty box ("ô trống trước câu trả lời đúng")
-  // and PDF drew vector boxes (not text glyphs) right next to each option line!
-  if (/(ô\s+trống|đánh\s+dấu|tích\s+vào|khoanh\s+vào)/i.test(cluster.fullText) && bodyLines.length >= 2) {
-    const cleanRows = bodyLines.filter((l) => l.text.trim().length >= 2 && !BLANK_WRITING_LINE_RE.test(l.text));
-    if (cleanRows.length >= 2 && cleanRows.length <= 6) {
-      return cleanRows.map((ln, idx) => {
+  // Pattern C: REAL PDF VECTOR CHECKBOXES (extracted via PDF.js getOperatorList!)
+  // Pairs each drawn square with its adjacent option text line — even when PDF has NO "A./B./C." or "☐" text!
+  if (clusterCheckboxes.length >= 2 && clusterCheckboxes.length <= 8) {
+    // Check if checkboxes are NOT a 2-column Đúng/Sai table on the right side
+    const rightSideCbs = clusterCheckboxes.filter((cb) => cb.x > pageWidth * 0.62);
+    const isLikelyTfRightTable = rightSideCbs.length >= 4 && rightSideCbs.length === clusterCheckboxes.length;
+    if (!isLikelyTfRightTable) {
+      const sortedCbs = [...clusterCheckboxes].sort((a, b) =>
+        Math.abs(a.y - b.y) > 10 ? a.y - b.y : a.x - b.x
+      );
+      const vecOpts: Array<{ id: string; label: string; text: string; anchor?: PdfPointAnchor }> = [];
+      for (let i = 0; i < sortedCbs.length; i++) {
+        const cb = sortedCbs[i];
+        const cbMidY = cb.y + cb.height / 2;
+        const cbRight = cb.x + cb.width;
+        // Find option text directly to the right of this checkbox (or right below it)
+        const matchingLine = bodyLines.find(
+          (ln) =>
+            Math.abs((ln.y + ln.height / 2) - cbMidY) <= 14 &&
+            ln.items.some((it) => it.x >= cbRight - 6)
+        );
+        let optText = '';
+        if (matchingLine) {
+          const rightItems = matchingLine.items.filter(
+            (it) => it.x >= cbRight - 6 && it.x < cbRight + pageWidth * 0.55
+          );
+          optText = joinLineItemsWithGap(rightItems).replace(/^[A-D][\.\)]\s*/, '').trim();
+        }
+        const letter = String.fromCharCode(65 + i);
+        vecOpts.push({
+          id: letter,
+          label: letter,
+          text: optText || `Phương án ${letter}`,
+          anchor: {
+            nx: clampNorm((cb.x + cb.width / 2) / pageWidth, 0.02, 0.96),
+            ny: clampNorm(cbMidY / pageHeight),
+          },
+        });
+      }
+      if (vecOpts.length >= 2) {
+        return vecOpts.slice(0, 6);
+      }
+    }
+  }
+
+  // Pattern D: Prompt explicitly asks to select/tick/circle an option AND clean body lines exist
+  // (handles PDFs where empty squares were rasterized into a background image)
+  const foldedAll = foldVietnamese(cluster.fullText);
+  if (
+    /(o\s+trong|o\s+vuong|danh\s+dau|tich\s+vao|khoanh\s+(?:tron|vao)|chon\s+(?:dap\s+an|phuong\s+an|cau\s+tra\s+loi|y\s+dung|chu\s+cai)|to\s+mau\s+vao\s+o)/i.test(
+      foldedAll
+    ) &&
+    bodyLines.length >= 2
+  ) {
+    const cleanRows = bodyLines.filter(
+      (l) => l.text.trim().length >= 2 && !BLANK_WRITING_LINE_RE.test(l.text)
+    );
+    // Merge wrapped lines if a row is indented further right than the typical option start X
+    const minBodyX = Math.min(...cleanRows.map((r) => r.x));
+    const mergedOptionRows: TextLineBlock[] = [];
+    for (const row of cleanRows) {
+      const prev = mergedOptionRows[mergedOptionRows.length - 1];
+      const isContinuation =
+        prev &&
+        row.y - (prev.y + prev.height) <= 12 &&
+        row.x > minBodyX + 12 &&
+        !/^[•\-–—A-Da-d1-6][\.\)\s]/.test(row.text);
+      if (isContinuation) {
+        prev.text = `${prev.text} ${row.text}`.trim();
+        prev.height = row.y + row.height - prev.y;
+      } else {
+        mergedOptionRows.push({ ...row });
+      }
+    }
+    if (mergedOptionRows.length >= 2 && mergedOptionRows.length <= 6) {
+      return mergedOptionRows.map((ln, idx) => {
         const letter = String.fromCharCode(65 + idx);
-        // Place clickable checkbox directly in front of the option text (where PDF's drawn square sits)
         const anchorX = Math.max(16, ln.x - 18);
         return {
           id: letter,
           label: letter,
           text: ln.text.replace(/^[•\-–—]\s*/, '').trim(),
           anchor: {
-            nx: clampNorm(anchorX / pageWidth, 0.02, 0.94),
+            nx: clampNorm(anchorX / pageWidth, 0.02, 0.95),
             ny: clampNorm((ln.y + ln.height / 2) / pageHeight),
           },
         };
@@ -695,15 +1079,72 @@ function extractMcqOptionsWithAnchors(
   return [];
 }
 
+function suggestTypesForUnclassified(
+  folded: string,
+  bodyLines: TextLineBlock[],
+  clusterCheckboxes: PdfGeomBox[],
+  clusterImages: PdfGeomBox[]
+): { reason: string; suggested: InteractiveQuestionType[] } {
+  const suggested: InteractiveQuestionType[] = [];
+  if (clusterCheckboxes.length > 0 || bodyLines.length >= 3) {
+    suggested.push('mcq');
+  }
+  if (clusterImages.length >= 2) {
+    suggested.push('matching', 'diagram_label');
+  }
+  if (/\?/.test(folded) || bodyLines.length <= 1) {
+    suggested.push('short', 'essay');
+  }
+  // Ensure 3 distinct helpful suggestions
+  for (const fallback of ['mcq', 'matching', 'tf', 'essay', 'short'] as InteractiveQuestionType[]) {
+    if (suggested.length >= 3) break;
+    if (!suggested.includes(fallback)) suggested.push(fallback);
+  }
+
+  let reason =
+    'Đề bài không ghi rõ lệnh chọn, nối, điền hay viết và không có ô chọn/dòng kẻ tương ứng trên PDF.';
+  if (bodyLines.length === 0) {
+    reason =
+      'Chỉ đọc được 1 dòng tiêu đề câu hỏi (chưa thấy phương án, bảng hoặc khoảng dòng trả lời đi kèm).';
+  } else if (clusterImages.length > 0) {
+    reason =
+      'Câu hỏi có hình minh họa đi kèm nhưng chưa có từ khóa nêu rõ yêu cầu (chọn, nối, chú thích hay viết).';
+  }
+
+  return { reason, suggested: suggested.slice(0, 3) };
+}
+
 function classifyQuestionCluster(
   cluster: QuestionCluster,
   pageWidth: number,
   pageHeight: number,
-  nextClusterStartY: number
+  nextClusterStartY: number,
+  geometry?: ExtractedPageGeometry
 ): ClassificationOutput {
   const text = cluster.fullText;
-  const lower = text.toLowerCase();
-  const stemEndIdx = findStemEndIndex(cluster.lines);
+  const folded = foldVietnamese(text);
+  // Slice PDF vector & image geometry belonging strictly to this question's vertical band first
+  const bandTop = Math.max(0, cluster.startY - 6);
+  const bandBottom = Math.min(pageHeight, nextClusterStartY - 2);
+  const clusterCheckboxes = (geometry?.checkboxes || []).filter(
+    (b) => b.y + b.height / 2 >= bandTop && b.y + b.height / 2 <= bandBottom
+  );
+  const clusterHlines = (geometry?.horizontalLines || []).filter(
+    (l) => l.y1 >= bandTop && l.y1 <= bandBottom
+  );
+  const clusterBoxes = (geometry?.boxes || []).filter(
+    (b) => b.y + b.height / 2 >= bandTop && b.y + b.height / 2 <= bandBottom
+  );
+  const clusterImages = (geometry?.images || []).filter(
+    (b) => b.y + b.height / 2 >= bandTop && b.y + b.height / 2 <= bandBottom
+  );
+
+  const stemEndIdx = findStemEndIndex(cluster.lines, clusterCheckboxes);
+  const stemText = cluster.lines
+    .slice(0, stemEndIdx + 1)
+    .map((l) => l.text)
+    .join(' ');
+  const stemFolded = foldVietnamese(stemText);
   const bodyLines = cluster.lines.slice(stemEndIdx + 1);
   const nonBlankLines = cluster.lines.filter((l) => !BLANK_WRITING_LINE_RE.test(l.text));
   const contentBottomY =
@@ -713,19 +1154,21 @@ function classifyQuestionCluster(
   const subItems = extractSubItemsFromCluster(cluster.lines);
 
   // --------------------------------------------------------------------------
-  // 1. MATCHING (HIGH PRIORITY — catches "Hãy nối", "Em hãy nối", "nối ... với ...", etc.)
+  // 1. MATCHING (HIGH PRIORITY — "Hãy nối", "Em hãy nối", "Nối mỗi ... với ...", "Ghép đôi")
   // --------------------------------------------------------------------------
   const isMatchingPrompt =
-    /(h[ãa]y\s+n[ốo]i|em\s+h[ãa]y\s+n[ốo]i|n[ốo]i\s+.{0,48}\s+v[ớo]i|n[ốo]i\s+(?:c[ộo]t|m[ỗo]i|c[áa]c|th[ôo]ng\s+tin|h[ìi]nh|[ýy]|t[ừu]|c[ặa]p|[ôo]|c[âa]u)|gh[ée]p\s*[đd][ôo]i|gh[ée]p\s*n[ốo]i|v[ẽe]\s*[đd][ươu][ờo]ng\s*n[ốo]i|k[ée]o\s*th[ảa]|c[ộo]t\s*(?:a|1|tr[áa]i|b[êe]n\s*tr[áa]i).{0,32}c[ộo]t\s*(?:b|2|ph[ảa]i|b[êe]n\s*ph[ảa]i)|match\s+)/i.test(
-      lower
+    /(hay\s+noi|em\s+hay\s+noi|noi\s+.{0,60}\s+voi|noi\s+(?:cot|moi|cac|thong\s+tin|hinh|y|tu|cap|o|cau|tranh|anh)|ghep\s*doi|ghep\s*noi|ghep\s+moi|ke\s+duong\s+noi|ve\s+duong\s+noi|keo\s+tha|cot\s*(?:a|1|trai|ben\s*trai).{0,40}cot\s*(?:b|2|phai|ben\s*phai)|match\s+)/i.test(
+      folded
     );
 
   if (isMatchingPrompt) {
-    const isDrag = /(k[ée]o\s+th[ảa]|drag\s*(?:and|&)\s*drop)/i.test(lower);
+    const isDrag = /(keo\s+tha|drag\s*(?:and|&)\s*drop)/i.test(folded);
     const { itemsA, itemsB, hasFullAnchors } = extractMatchingColumns(
       bodyLines.length > 0 ? bodyLines : cluster.lines.slice(1),
       pageWidth,
-      pageHeight
+      pageHeight,
+      clusterImages,
+      clusterBoxes
     );
 
     if (hasFullAnchors && !isDrag) {
@@ -735,7 +1178,7 @@ function classifyQuestionCluster(
         overlayMode: 'anchored',
         matchingMode: 'line',
         needsReview: true,
-        detectionNote: `Nhận diện đúng dạng Ghép đôi (${itemsA.length} mục bên trái · ${itemsB.length} mục bên phải). Học sinh vẽ đường nối trực tiếp trên trang PDF; thầy cô hãy chọn cặp đáp án đúng.`,
+        detectionNote: `Nhận diện đúng dạng Nối cột (${itemsA.length} mục bên trái · ${itemsB.length} mục bên phải). Học sinh vẽ đường nối trực tiếp trên trang PDF; thầy cô hãy chọn cặp đáp án đúng.`,
         extractedMatching: { itemsA, itemsB },
         subItems: subItems.length > 0 ? subItems : undefined,
         contentBottomY,
@@ -774,20 +1217,40 @@ function classifyQuestionCluster(
   }
 
   // --------------------------------------------------------------------------
-  // 2. TRUE / FALSE (Table with Đúng / Sai columns OR statement list)
+  // 2. TRUE / FALSE (Đúng / Sai — header columns OR 2 right-aligned vector checkbox columns)
   // --------------------------------------------------------------------------
-  const tfHeaderLine = cluster.lines.find(
-    (l) =>
-      l.items.some((it) => /^(?:đúng|đ)$/i.test(it.str.trim())) &&
-      l.items.some((it) => /^(?:sai|s)$/i.test(it.str.trim()))
-  );
+  const tfHeaderLine = cluster.lines.find((l) => {
+    const hasTrue = l.items.some((it) => /^(?:dung|d|đ)$/i.test(foldVietnamese(it.str)));
+    const hasFalse = l.items.some((it) => /^(?:sai|s)$/i.test(foldVietnamese(it.str)));
+    return hasTrue && hasFalse;
+  });
+
+  // Also detect 2 right-aligned vertical columns of vector checkboxes!
+  const rightCbs = clusterCheckboxes.filter((cb) => cb.x > pageWidth * 0.58);
+  const tfColClusters: number[] = [];
+  for (const cb of rightCbs) {
+    const cx = cb.x + cb.width / 2;
+    if (!tfColClusters.some((x) => Math.abs(x - cx) < 18)) {
+      tfColClusters.push(cx);
+    }
+  }
+  tfColClusters.sort((a, b) => a - b);
+  const hasTwoRightCheckboxColumns = tfColClusters.length === 2 && rightCbs.length >= 4;
+
+  const isExplicitChoiceStem =
+    /(dap\s+an\s+dung|phuong\s+an\s+dung|cau\s+tra\s+loi\s+dung|y\s+dung\s+nhat|chon\s+(?:mot|1|cac|tat\s+ca)\s+(?:dap\s+an|phuong\s+an))/i.test(
+      stemFolded
+    );
+
   const isTfPrompt =
-    /(đúng\s*[/\-–]\s*sai|đúng\s+hay\s+sai|chọn\s+đ\s+hoặc\s+s|bảng\s+đúng|đánh\s+dấu.*đúng.*sai|ghi\s+đ.*s|điền\s+đ.*s|true\s*[/\-]\s*false)/i.test(
-      lower
+    /(dung\s*[/\-–]\s*sai|dung\s+(?:hay|hoac)\s+sai|chon\s+d\s+(?:hoac|hay)\s+s|bang\s+dung|danh\s+dau.{0,40}dung.{0,20}sai|ghi\s+d.{0,25}s|dien\s+d.{0,25}s|dung\s*\(\s*d\s*\)|sai\s*\(\s*s\s*\)|nhan\s+dinh.{0,25}dung.{0,25}sai|true\s*[/\-]\s*false)/i.test(
+      folded
     ) ||
     Boolean(tfHeaderLine) ||
-    (/(?:^|[\s/|(\[.,;:])đúng(?=$|[\s/|)\].:,;])/i.test(lower) &&
-      /(?:^|[\s/|(\[.,;:])sai(?=$|[\s/|)\].:,;])/i.test(lower));
+    hasTwoRightCheckboxColumns ||
+    (!isExplicitChoiceStem &&
+      /(?:^|[\s/|(\[.,;:])dung(?=$|[\s/|)\].:,;])/i.test(stemFolded) &&
+      /(?:^|[\s/|(\[.,;:])sai(?=$|[\s/|)\].:,;])/i.test(stemFolded));
 
   if (isTfPrompt) {
     let trueNx = 0.78;
@@ -798,63 +1261,78 @@ function classifyQuestionCluster(
     if (tfHeaderLine) {
       const idx = cluster.lines.indexOf(tfHeaderLine);
       if (idx > 0) headerIndex = idx;
-      const trueItem = tfHeaderLine.items.find((it) => /^(?:đúng|đ)$/i.test(it.str.trim()));
-      const falseItem = tfHeaderLine.items.find((it) => /^(?:sai|s)$/i.test(it.str.trim()));
+      const trueItem = tfHeaderLine.items.find((it) => /^(?:dung|d)$/i.test(foldVietnamese(it.str)));
+      const falseItem = tfHeaderLine.items.find((it) => /^(?:sai|s)$/i.test(foldVietnamese(it.str)));
       if (trueItem && falseItem) {
-        trueNx = clampNorm((trueItem.x + trueItem.width / 2) / pageWidth, 0.55, 0.94);
-        falseNx = clampNorm((falseItem.x + falseItem.width / 2) / pageWidth, 0.62, 0.97);
+        trueNx = clampNorm((trueItem.x + trueItem.width / 2) / pageWidth, 0.52, 0.94);
+        falseNx = clampNorm((falseItem.x + falseItem.width / 2) / pageWidth, 0.6, 0.97);
         hasTableColumns = Math.abs(falseNx - trueNx) >= 0.04;
       }
+    } else if (hasTwoRightCheckboxColumns) {
+      trueNx = clampNorm(tfColClusters[0] / pageWidth, 0.52, 0.94);
+      falseNx = clampNorm(tfColClusters[1] / pageWidth, 0.6, 0.97);
+      hasTableColumns = Math.abs(falseNx - trueNx) >= 0.04;
     }
 
     const rowCandidates = cluster.lines.slice(headerIndex + 1);
     const stmts: TfStatement[] = [];
     for (const ln of rowCandidates) {
       if (BLANK_WRITING_LINE_RE.test(ln.text)) continue;
-      // Ignore repeated column header text
-      if (/^(?:stt|nội dung|phát biểu|đúng|sai|đ|s|\s)+$/i.test(ln.text.trim())) continue;
+      const lnFold = foldVietnamese(ln.text);
+      if (/^(?:stt|noi\s+dung|phat\s+bieu|nhan\s+dinh|cau|dung|sai|d|s|\s)+$/i.test(lnFold)) continue;
 
       const prefixed = ln.text.match(/^([a-dA-D]|[1-6])[\)\.]\s*(.+)$/);
-      const leftOnlyText = hasTableColumns
-        ? ln.items
-            .filter((it) => it.x < Math.min(trueNx, falseNx) * pageWidth - 12)
-            .map((it) => it.str)
-            .join(' ')
-            .replace(/\s+/g, ' ')
-            .trim()
-        : ln.text.replace(/\b(đúng|sai|đ|s|☐|□)\b\s*$/gi, '').trim();
+      const leftItems = hasTableColumns
+        ? ln.items.filter((it) => it.x < Math.min(trueNx, falseNx) * pageWidth - 12)
+        : ln.items;
+      const leftOnlyText = joinLineItemsWithGap(leftItems)
+        .replace(/(?:^|\s)(?:đúng|sai|đ|s|☐|□)\s*$/gi, '')
+        .trim();
 
       if (prefixed) {
         const cleanBody = leftOnlyText
           .replace(/^([a-dA-D]|[1-6])[\)\.]\s*/, '')
-          .replace(/\b(đúng|sai|đ|s|☐|□)\b\s*$/gi, '')
           .trim();
+        // Snap rowAnchor Y to actual vector checkbox row if available
+        const nearCb = rightCbs.find((cb) => Math.abs((cb.y + cb.height / 2) - (ln.y + ln.height / 2)) <= 14);
+        const anchorY = nearCb ? nearCb.y + nearCb.height / 2 : ln.y + ln.height / 2;
         stmts.push({
           id: `tf-${stmts.length + 1}`,
           label: `${prefixed[1].toLowerCase()})`,
           text: cleanBody || prefixed[2].trim(),
           rowAnchor: hasTableColumns
             ? {
-                ny: clampNorm((ln.y + ln.height / 2) / pageHeight),
+                ny: clampNorm(anchorY / pageHeight),
                 trueNx,
                 falseNx,
                 rowNh: clampNorm(Math.max(18, ln.height + 6) / pageHeight, 0.02, 0.08),
               }
             : undefined,
         });
-      } else if (hasTableColumns && leftOnlyText.length >= 6) {
-        const letter = String.fromCharCode(97 + stmts.length);
-        stmts.push({
-          id: `tf-${stmts.length + 1}`,
-          label: `${letter})`,
-          text: leftOnlyText,
-          rowAnchor: {
-            ny: clampNorm((ln.y + ln.height / 2) / pageHeight),
-            trueNx,
-            falseNx,
-            rowNh: clampNorm(Math.max(18, ln.height + 6) / pageHeight, 0.02, 0.08),
-          },
-        });
+      } else if (hasTableColumns && leftOnlyText.length >= 5) {
+        // Check if this is a wrapped continuation of the previous statement (no checkbox on this line)
+        const prev = stmts[stmts.length - 1];
+        const hasCbOnThisLine = rightCbs.some(
+          (cb) => Math.abs((cb.y + cb.height / 2) - (ln.y + ln.height / 2)) <= 12
+        );
+        if (prev && prev.rowAnchor && !hasCbOnThisLine && (ln.y / pageHeight) - prev.rowAnchor.ny < 0.028) {
+          prev.text = `${prev.text} ${leftOnlyText}`.trim();
+        } else {
+          const letter = String.fromCharCode(97 + stmts.length);
+          const nearCb = rightCbs.find((cb) => Math.abs((cb.y + cb.height / 2) - (ln.y + ln.height / 2)) <= 14);
+          const anchorY = nearCb ? nearCb.y + nearCb.height / 2 : ln.y + ln.height / 2;
+          stmts.push({
+            id: `tf-${stmts.length + 1}`,
+            label: `${letter})`,
+            text: leftOnlyText,
+            rowAnchor: {
+              ny: clampNorm(anchorY / pageHeight),
+              trueNx,
+              falseNx,
+              rowNh: clampNorm(Math.max(18, ln.height + 6) / pageHeight, 0.02, 0.08),
+            },
+          });
+        }
       }
     }
 
@@ -885,7 +1363,7 @@ function classifyQuestionCluster(
   // --------------------------------------------------------------------------
   // 3. ORDERING
   // --------------------------------------------------------------------------
-  if (/(sắp\s+xếp.*thứ\s+tự|sắp\s+xếp.*trình\s+tự|đúng\s+thứ\s+tự|put.*in\s+order)/i.test(lower)) {
+  if (/(sap\s+xep.{0,30}thu\s+tu|sap\s+xep.{0,30}trinh\s+tu|dung\s+thu\s+tu|thu\s+tu\s+cac\s+buoc|put.{0,20}in\s+order)/i.test(folded)) {
     const items = bodyLines
       .filter((l) => l.text.length > 3 && !BLANK_WRITING_LINE_RE.test(l.text))
       .slice(0, 6)
@@ -914,16 +1392,22 @@ function classifyQuestionCluster(
   }
 
   // --------------------------------------------------------------------------
-  // 4. MULTIPLE CHOICE (Single Choice vs Multi-Select)
+  // 4. MULTIPLE CHOICE (Single Choice vs Multi-Select — text + Unicode + PDF Vector Checkboxes!)
   // --------------------------------------------------------------------------
-  const extractedOptions = extractMcqOptionsWithAnchors(cluster, stemEndIdx, pageWidth, pageHeight);
+  const extractedOptions = extractMcqOptionsWithAnchors(
+    cluster,
+    stemEndIdx,
+    pageWidth,
+    pageHeight,
+    clusterCheckboxes
+  );
   const isMcqPrompt =
-    /(đánh\s+dấu\s*(?:[✓✔×x✗]|vào\s+ô)|tích\s+vào\s+ô|khoanh\s+(?:tròn|vào\s+chữ)|chọn\s+(?:đáp\s+án|phương\s+án|câu\s+trả\s+lời)\s+đúng|chọn\s+chữ\s+cái|chọn\s+(?:các|những)\s+(?:đáp\s+án|phương\s+án|ý)|trắc\s+nghiệm)/i.test(
-      lower
+    /(danh\s+dau.{0,28}(?:o\s+trong|o\s+vuong|dap\s+an|cau\s+tra\s+loi|phuong\s+an|chu\s+cai)|danh\s+dau\s*(?:[✓✔×x✗]|tich|\(\s*[✓✔x]\s*\))|tich\s+vao\s+o|to\s+mau\s+vao\s+o|khoanh\s+(?:tron|vao\s+chu|vao\s+dap\s+an)|chon\s+(?:dap\s+an|phuong\s+an|cau\s+tra\s+loi|y|chu\s+cai)|em\s+hay\s+chon|hay\s+chon|trac\s+nghiem)/i.test(
+      folded
     );
   const isExplicitMultiChoice =
-    /(chọn\s+(?:các|những|tất\s+cả)|nhiều\s+(?:đáp\s+án|phương\s+án)|các\s+(?:đáp\s+án|phương\s+án)\s+đúng|tất\s+cả\s+các\s+phương\s+án|select\s+all|chọn\s+2\s+|chọn\s+3\s+)/i.test(
-      lower
+    /(chon\s+(?:cac|nhung|tat\s+ca)|nhieu\s+(?:dap\s+an|phuong\s+an)|cac\s+(?:dap\s+an|phuong\s+an|cau\s+tra\s+loi|y)\s+dung|nhung\s+(?:dap\s+an|phuong\s+an|y)\s+dung|tat\s+ca\s+cac\s+phuong\s+an|select\s+all|chon\s+[23]\s+)/i.test(
+      folded
     );
 
   if (extractedOptions.length >= 2 || isMcqPrompt) {
@@ -945,27 +1429,43 @@ function classifyQuestionCluster(
       overlayMode: hasAnchors ? 'anchored' : 'box',
       needsReview: true,
       detectionNote: hasAnchors
-        ? `Nhận diện câu ${mcqType === 'mcq_multi' ? 'Trắc nghiệm nhiều đáp án' : 'Trắc nghiệm một đáp án'} (${finalOpts.length} phương án) và gắn ô chọn trực tiếp tại phương án trên PDF. Thầy cô hãy chọn đáp án đúng.`
-        : `Nhận diện câu ${mcqType === 'mcq_multi' ? 'Trắc nghiệm nhiều đáp án' : 'Trắc nghiệm một đáp án'}. Thầy cô hãy kiểm tra phương án và chọn đáp án đúng.`,
+        ? `Nhận diện câu ${mcqType === 'mcq_multi' ? 'Chọn nhiều đáp án' : 'Chọn một đáp án'} (${finalOpts.length} phương án) và gắn ô chọn trực tiếp tại phương án trên PDF. Thầy cô hãy chọn đáp án đúng.`
+        : `Nhận diện câu ${mcqType === 'mcq_multi' ? 'Chọn nhiều đáp án' : 'Chọn một đáp án'}. Thầy cô hãy kiểm tra phương án và chọn đáp án đúng.`,
       extractedOptions: finalOpts,
       contentBottomY,
     };
   }
 
   // --------------------------------------------------------------------------
-  // 5. FILL-IN-THE-BLANK (Inline blanks — NOT standalone essay writing lines!)
+  // 5. FILL-IN-THE-BLANK (Inline text blanks OR inline PDF vector underlines)
   // --------------------------------------------------------------------------
   const inlineBlankLines = cluster.lines.filter(
     (l) => !BLANK_WRITING_LINE_RE.test(l.text) && /(?:_{3,}|\.{4,}|…{2,})/.test(l.text)
   );
+  // Also detect inline vector horizontal underlines sitting on the same baseline as a text line
+  const inlineVectorBlanks: Array<{ ln: TextLineBlock; hline: PdfGeomLine }> = [];
+  for (const hline of clusterHlines) {
+    const segW = Math.abs(hline.x2 - hline.x1);
+    if (segW < 32 || segW > pageWidth * 0.55) continue;
+    const hostLn = cluster.lines.find(
+      (ln) =>
+        Math.abs(hline.y1 - (ln.y + ln.height)) <= 7 &&
+        ln.text.trim().length >= 8 &&
+        !BLANK_WRITING_LINE_RE.test(ln.text)
+    );
+    if (hostLn) {
+      inlineVectorBlanks.push({ ln: hostLn, hline });
+    }
+  }
+
   const isFillPrompt =
-    /(điền\s+vào\s+chỗ|điền\s+từ|điền\s+số|điền\s+hệ\s+số|điền\s+khuyết|hoàn\s+thành\s+(?:câu|đoạn)|fill\s+in\s+the\s+blank)/i.test(
-      lower
+    /(dien\s+vao\s+cho|dien\s+tu|dien\s+cum\s+tu|dien\s+so|dien\s+he\s+so|dien\s+khuyet|dien\s+thong\s+tin|dien\s+noi\s+dung|dien\s+tiep|viet\s+vao\s+cho\s+cham|hoan\s+thanh\s+(?:cau|doan|bang)|fill\s+in\s+the\s+blank)/i.test(
+      folded
     );
 
-  if (isFillPrompt || inlineBlankLines.length > 0) {
+  if (isFillPrompt || inlineBlankLines.length > 0 || inlineVectorBlanks.length > 0) {
     const slots: FillBlankSlot[] = [];
-    inlineBlankLines.slice(0, 5).forEach((ln, idx) => {
+    inlineBlankLines.slice(0, 6).forEach((ln, idx) => {
       const m = ln.text.match(/^(.*?)(_{3,}|\.{4,}|…{2,})(.*)$/);
       const prefix = (m?.[1] || '').trim().slice(-45);
       const blankToken = m?.[2] || '.....';
@@ -988,6 +1488,24 @@ function classifyQuestionCluster(
       });
     });
 
+    if (slots.length === 0 && inlineVectorBlanks.length > 0) {
+      inlineVectorBlanks.slice(0, 6).forEach(({ ln, hline }, idx) => {
+        const x1 = Math.min(hline.x1, hline.x2);
+        const w = Math.max(54, Math.abs(hline.x2 - hline.x1));
+        slots.push({
+          id: `fb-${idx + 1}`,
+          prefix: ln.text.slice(0, 40),
+          suffix: '',
+          anchor: {
+            nx: clampNorm(x1 / pageWidth, 0.03, 0.85),
+            ny: clampNorm((ln.y + ln.height / 2) / pageHeight),
+            nw: clampNorm(w / pageWidth, 0.08, 0.42),
+            nh: clampNorm(Math.max(18, ln.height + 6) / pageHeight, 0.02, 0.06),
+          },
+        });
+      });
+    }
+
     if (slots.length === 0) {
       slots.push({ id: 'fb-1', prefix: 'Chỗ trống 1:', suffix: '' });
     }
@@ -1007,7 +1525,7 @@ function classifyQuestionCluster(
   // --------------------------------------------------------------------------
   // 6. DIAGRAM LABELING
   // --------------------------------------------------------------------------
-  if (/(chú\s+thích|điền\s+tên\s+bộ\s+phận|sơ\s+đồ\s+sau|bản\s+đồ|lược\s+đồ)/i.test(lower)) {
+  if (/(chu\s+thich|dien\s+ten\s+bo\s+phan|so\s+do\s+sau|ban\s+do|luoc\s+do|ghi\s+ten\s+cac\s+bo\s+phan)/i.test(folded)) {
     return {
       type: 'diagram_label',
       classificationStatus: 'classified',
@@ -1022,7 +1540,7 @@ function classifyQuestionCluster(
   // --------------------------------------------------------------------------
   // 7. FORMULA INPUT
   // --------------------------------------------------------------------------
-  if (/(viết\s+công\s+thức|biểu\s+thức|đạo\s+hàm|tích\s+phân|phương\s+trình\s+hóa\s+học)/i.test(lower)) {
+  if (/(viet\s+cong\s+thuc|bieu\s+thuc|dao\s+ham|tich\s+phan|phuong\s+trinh\s+hoa\s+hoc)/i.test(folded)) {
     return {
       type: 'formula',
       classificationStatus: 'classified',
@@ -1037,7 +1555,7 @@ function classifyQuestionCluster(
   // --------------------------------------------------------------------------
   // 8. DRAWING / HANDWRITING
   // --------------------------------------------------------------------------
-  if (/(vẽ\s+hình|vẽ\s+đồ\s+thị|vẽ\s+biểu\s+đồ|phác\s+thảo|biểu\s+diễn\s+hình)/i.test(lower)) {
+  if (/(ve\s+hinh|ve\s+do\s+thi|ve\s+bieu\s+do|phac\s+thao|bieu\s+dien\s+hinh|ve\s+so\s+do)/i.test(folded)) {
     return {
       type: 'drawing',
       classificationStatus: 'classified',
@@ -1052,7 +1570,7 @@ function classifyQuestionCluster(
   // --------------------------------------------------------------------------
   // 9. READING COMPREHENSION
   // --------------------------------------------------------------------------
-  if (/(đọc\s+đoạn|đọc\s+tư\s+liệu|read\s+the\s+passage|read\s+the\s+text)/i.test(lower)) {
+  if (/(doc\s+doan|doc\s+tu\s+lieu|read\s+the\s+passage|read\s+the\s+text)/i.test(folded)) {
     return {
       type: 'reading',
       classificationStatus: 'classified',
@@ -1067,7 +1585,7 @@ function classifyQuestionCluster(
   // --------------------------------------------------------------------------
   // 10. NUMERIC CALCULATION
   // --------------------------------------------------------------------------
-  if (/(tính\s+giá\s+trị|kết\s+quả\s+bằng|bao\s+nhiêu\s+%|nhập\s+số|đơn\s+vị\s*[:(])/i.test(lower)) {
+  if (/(tinh\s+gia\s+tri|ket\s+qua\s+bang|bao\s+nhieu\s+%|nhap\s+so|don\s+vi\s*[:(])/i.test(folded)) {
     return {
       type: 'number',
       classificationStatus: 'classified',
@@ -1081,7 +1599,7 @@ function classifyQuestionCluster(
   // --------------------------------------------------------------------------
   // 11. PRACTICAL ATTACHMENT
   // --------------------------------------------------------------------------
-  if (/(đính\s+kèm|nộp\s+tệp|chụp\s+ảnh\s+sản\s+phẩm|mã\s+nguồn|file\s+thực\s+hành)/i.test(lower)) {
+  if (/(dinh\s+kem|nop\s+tep|chup\s+anh\s+san\s+pham|ma\s+nguon|file\s+thuc\s+hanh)/i.test(folded)) {
     return {
       type: 'attachment',
       classificationStatus: 'classified',
@@ -1096,7 +1614,7 @@ function classifyQuestionCluster(
   // --------------------------------------------------------------------------
   // 12. SHORT ANSWER (Explicit short single-fact prompt)
   // --------------------------------------------------------------------------
-  if (/(ghi\s+tên|kể\s+tên|viết\s+tên|cho\s+biết\s+tên|trả\s+lời\s+ngắn)/i.test(lower)) {
+  if (/(ghi\s+ten|ke\s+ten|viet\s+ten|cho\s+biet\s+ten|tra\s+loi\s+ngan)/i.test(folded)) {
     const availBlankH = nextClusterStartY - contentBottomY - 10;
     return {
       type: 'short',
@@ -1110,13 +1628,18 @@ function classifyQuestionCluster(
   }
 
   // --------------------------------------------------------------------------
-  // 13. ESSAY — ONLY WITH EXPLICIT ESSAY SIGNALS OR BLANK WRITING LINES!
+  // 13. ESSAY — ONLY WITH EXPLICIT WRITING SIGNALS OR >= 2 TEXT/VECTOR WRITING LINES!
   // --------------------------------------------------------------------------
-  const blankWritingLineCount = cluster.lines.filter((l) => BLANK_WRITING_LINE_RE.test(l.text)).length;
+  const blankTextLineCount = cluster.lines.filter((l) => BLANK_WRITING_LINE_RE.test(l.text)).length;
+  const standaloneVectorWritingLines = clusterHlines.filter(
+    (l) => Math.abs(l.x2 - l.x1) >= pageWidth * 0.35 && l.y1 > cluster.startY + 14
+  ).length;
+  const totalWritingLines = Math.max(blankTextLineCount, standaloneVectorWritingLines);
+
   const hasExplicitEssaySignal =
-    /(tr[ìi]nh\s+b[àa]y|gi[ảa]i\s+th[íi]ch|ph[âa]n\s+t[íi]ch|v[ìi]\s+sao|t[ạa]i\s+sao|theo\s+em|em\s+h[ãa]y\s+(?:vi[ếe]t|n[êe]u|k[ểe]|cho\s+bi[ếe]t|m[ôo]\s+t[ảa]|nh[ậa]n\s+x[ée]t)|vi[ếe]t\s+c[âa]u\s+tr[ảa]\s+l[ờo]i|em\s+s[ẽe]\s+l[àa]m\s+g[ìi]|quy[ếe]t\s+[đd][ịi]nh|h[ãa]y\s+n[êe]u|h[ãa]y\s+k[ểe]|so\s+s[áa]nh|ch[ứu]ng\s+minh|t[ựư]\s+lu[ậa]n|tr[ảa]\s+l[ờo]i\s+c[âa]u\s+h[ỏo]i\s+sau)/i.test(
-      lower
-    ) || blankWritingLineCount >= 2;
+    /(trinh\s+bay|giai\s+thich|phan\s+tich|vi\s+sao|tai\s+sao|theo\s+em|em\s+hay\s+(?:viet|neu|ke|cho\s+biet|mo\s+ta|nhan\s+xet|tra\s+loi|chia\s+se)|viet\s+cau\s+tra\s+loi|em\s+se\s+lam\s+gi|em\s+quyet\s+dinh|quyet\s+dinh\s+cua\s+em|hay\s+(?:neu|ke|viet|cho\s+biet|tra\s+loi|mo\s+ta|nhan\s+xet)|neu\s+vi\s+du|cho\s+vi\s+du|so\s+sanh|chung\s+minh|tu\s+luan|tra\s+loi\s+cau\s+hoi|neu\s+y\s+kien|em\s+hoc\s+duoc|rut\s+ra\s+ket\s+luan)/i.test(
+      folded
+    ) || totalWritingLines >= 2;
 
   if (hasExplicitEssaySignal) {
     const availBlankH = nextClusterStartY - contentBottomY - 12;
@@ -1135,15 +1658,23 @@ function classifyQuestionCluster(
   }
 
   // --------------------------------------------------------------------------
-  // 14. UNCLASSIFIED — NEVER DEFAULT TO GIANT ESSAY BOX!
+  // 14. UNCLASSIFIED — NEVER DEFAULT TO GIANT ESSAY BOX; PROVIDE CLEAR REASON + 1-CLICK SUGGESTIONS!
   // --------------------------------------------------------------------------
+  const { reason, suggested } = suggestTypesForUnclassified(
+    folded,
+    bodyLines,
+    clusterCheckboxes,
+    clusterImages
+  );
+
   return {
-    type: 'short',
+    type: suggested[0] || 'short',
     classificationStatus: 'unclassified',
+    unclassifiedReason: reason,
+    suggestedTypes: suggested,
     overlayMode: 'drawer_button',
     needsReview: true,
-    detectionNote:
-      'Chưa đủ căn cứ để phân loại tự động dạng câu hỏi này. Thầy cô hãy nhấn vào câu hỏi và chọn đúng 1 trong 14 dạng (ứng dụng không tự tạo khung Tự luận che trang).',
+    detectionNote: `${reason} Thầy cô chọn nhanh 1 dạng bài đề xuất ở danh sách bên trái.`,
     subItems: subItems.length > 0 ? subItems : undefined,
     contentBottomY,
   };
@@ -1314,6 +1845,7 @@ export function analyzeExtractedPagesForQuestions(pages: ExtractedPageInput[]): 
 
     // Partition lines into main question clusters (NEVER splitting 1), 2), 3) sub-items or headings!)
     const clusters: QuestionCluster[] = [];
+    let lastBareNum = 0;
     for (let li = 0; li < contentLines.length; li++) {
       const ln = contentLines[li];
       const trimmed = ln.text.trim();
@@ -1329,18 +1861,38 @@ export function analyzeExtractedPagesForQuestions(pages: ExtractedPageInput[]): 
         baiMatch &&
         isBaiLineALessonHeading(ln, contentLines[li + 1], pageHasExplicitCau, medianFont, ph);
 
-      // Bare "1.", "2." is ONLY allowed as a main question when:
+      // Bare "1.", "2.", "3."... main question support for workbooks without "Câu N" prefix:
       // - NO explicit "Câu N" exists on the page,
-      // - We are NOT inside an active cluster whose stem is matching/tf/ordering,
-      // - It starts near the left margin (x < pw * 0.18) and has a full sentence (>= 28 chars or ends with ? / :).
-      const bareNumMatch =
-        !explicitMatch &&
-        !baiMatch &&
-        !pageHasExplicitCau &&
-        clusters.length === 0 &&
-        ln.x < pw * 0.18
-          ? trimmed.match(/^(\d{1,2})\.\s+(.{24,})$/)
-          : null;
+      // - Starts near left margin (x < pw * 0.24),
+      // - Monotonically increasing question number (1, 2, 3...) — NOT sub-items like "1)", "2)"!
+      // - Has an instruction/exercise verb, question mark, OR full sentence (>= 22 chars)
+      // - NOT inside an active matching/TF body where 1., 2. are short sub-items
+      let bareNumMatch: RegExpMatchArray | null = null;
+      if (!explicitMatch && !baiMatch && !pageHasExplicitCau && ln.x < pw * 0.24) {
+        const m = trimmed.match(/^(\d{1,2})\.\s+(.{10,})$/);
+        if (m) {
+          const numVal = Number(m[1]);
+          const bodyFold = foldVietnamese(m[2]);
+          const prevCluster = clusters[clusters.length - 1];
+          const prevIsMatchingOrTf =
+            prevCluster &&
+            /(hay\s+noi|noi\s+.{0,40}\s+voi|ghep\s+doi|dung\s*[/\-]\s*sai|dung\s+hay\s+sai)/i.test(
+              foldVietnamese(prevCluster.lines[0]?.text || '')
+            );
+          const hasActionOrQuestion =
+            EXERCISE_VERB_RE.test(bodyFold) || /\?|:/.test(m[2]) || m[2].length >= 26;
+          const isMonotonic =
+            (lastBareNum === 0 && numVal >= 1 && numVal <= 20) ||
+            (lastBareNum > 0 && numVal > lastBareNum && numVal <= lastBareNum + 3);
+          const hasVerticalGap =
+            !prevCluster || ln.y - prevCluster.endY >= 10 || EXERCISE_VERB_RE.test(bodyFold);
+
+          if (isMonotonic && hasActionOrQuestion && hasVerticalGap && !(prevIsMatchingOrTf && !EXERCISE_VERB_RE.test(bodyFold))) {
+            bareNumMatch = m;
+            lastBareNum = numVal;
+          }
+        }
+      }
 
       if (explicitMatch || (baiMatch && !isBaiHeading) || bareNumMatch) {
         const rawCode = explicitMatch
@@ -1370,7 +1922,7 @@ export function analyzeExtractedPagesForQuestions(pages: ExtractedPageInput[]): 
     // Classify and compute non-covering regions for each cluster
     clusters.forEach((cl, idx) => {
       const nextClusterStartY = clusters[idx + 1]?.startY ?? ph - 32;
-      const cls = classifyQuestionCluster(cl, pw, ph, nextClusterStartY);
+      const cls = classifyQuestionCluster(cl, pw, ph, nextClusterStartY, pageData.geometry);
       const meta = QUESTION_TYPE_META[cls.type];
 
       const minX = Math.min(...cl.lines.map((l) => l.x));
@@ -1467,6 +2019,7 @@ export function analyzeExtractedPagesForQuestions(pages: ExtractedPageInput[]): 
       const firstLineClean = cl.lines[0].text
         .replace(EXPLICIT_MAIN_QUESTION_RE, '')
         .replace(BAI_NUMBER_RE, '')
+        .replace(/^\d{1,2}\.\s+/, '')
         .replace(/^[:\.\-–\s]+/, '')
         .trim();
 
@@ -1483,6 +2036,8 @@ export function analyzeExtractedPagesForQuestions(pages: ExtractedPageInput[]): 
         teacherApproved: false,
         teacherModified: false,
         classificationStatus: cls.classificationStatus,
+        unclassifiedReason: cls.unclassifiedReason,
+        suggestedTypes: cls.suggestedTypes,
         overlayMode: cls.overlayMode,
         subItems: cls.subItems,
         questionBounds: qBounds,
@@ -1663,9 +2218,312 @@ export function compareDetectionForRedetect(
   };
 }
 
+// ============================================================================
+// PDF.JS VECTOR GEOMETRY & EMBEDDED IMAGE EXTRACTOR (getOperatorList)
+// ============================================================================
+
+function multiplyMatrix2D(m1: number[], m2: number[]): number[] {
+  return [
+    m1[0] * m2[0] + m1[2] * m2[1],
+    m1[1] * m2[0] + m1[3] * m2[1],
+    m1[0] * m2[2] + m1[2] * m2[3],
+    m1[1] * m2[2] + m1[3] * m2[3],
+    m1[0] * m2[4] + m1[2] * m2[5] + m1[4],
+    m1[1] * m2[4] + m1[3] * m2[5] + m1[5],
+  ];
+}
+
+function applyMatrixPoint(m: number[], x: number, y: number): { x: number; y: number } {
+  return {
+    x: m[0] * x + m[2] * y + m[4],
+    y: m[1] * x + m[3] * y + m[5],
+  };
+}
+
+function classifyVectorRect(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  pageWidth: number,
+  pageHeight: number,
+  geom: ExtractedPageGeometry
+) {
+  if (w <= 0.5 || h <= 0.5) return;
+  if (w > pageWidth * 0.94 && h > pageHeight * 0.9) return; // Ignore full-page border/background
+
+  // Thin horizontal filled rectangle -> horizontal line
+  if (w >= 32 && h <= 3.5) {
+    geom.horizontalLines.push({ x1: x, y1: y + h / 2, x2: x + w, y2: y + h / 2 });
+    return;
+  }
+  // Thin vertical filled rectangle -> vertical divider
+  if (h >= 24 && w <= 3.5) {
+    geom.verticalLines.push({ x1: x + w / 2, y1: y, x2: x + w / 2, y2: y + h });
+    return;
+  }
+  // Vector checkbox square (7..28pt, roughly square)
+  const ratio = w / h;
+  if (w >= 7 && w <= 28 && h >= 7 && h <= 28 && ratio >= 0.68 && ratio <= 1.45) {
+    const dup = geom.checkboxes.some(
+      (c) => Math.abs(c.x - x) < 5 && Math.abs(c.y - y) < 5
+    );
+    if (!dup) geom.checkboxes.push({ x, y, width: w, height: h });
+    return;
+  }
+  // Card / Table cell box
+  if (w >= 44 && h >= 16) {
+    const dup = geom.boxes.some(
+      (b) => Math.abs(b.x - x) < 6 && Math.abs(b.y - y) < 6 && Math.abs(b.width - w) < 8
+    );
+    if (!dup) geom.boxes.push({ x, y, width: w, height: h });
+  }
+}
+
+async function extractPageGeometry(
+  page: { getOperatorList: () => Promise<{ fnArray: number[]; argsArray: unknown[] }> },
+  vp: { transform: number[]; width: number; height: number }
+): Promise<ExtractedPageGeometry> {
+  const geom: ExtractedPageGeometry = {
+    checkboxes: [],
+    horizontalLines: [],
+    verticalLines: [],
+    boxes: [],
+    images: [],
+  };
+
+  try {
+    const pdfjsLib = await getPdfjsLib();
+    const OPS = pdfjsLib.OPS;
+    const opList = await page.getOperatorList();
+    let ctm = [...vp.transform];
+    const stack: number[][] = [];
+
+    const recordTransformedRect = (rx: number, ry: number, rw: number, rh: number) => {
+      const p1 = applyMatrixPoint(ctm, rx, ry);
+      const p2 = applyMatrixPoint(ctm, rx + rw, ry);
+      const p3 = applyMatrixPoint(ctm, rx, ry + rh);
+      const p4 = applyMatrixPoint(ctm, rx + rw, ry + rh);
+      const minX = Math.min(p1.x, p2.x, p3.x, p4.x);
+      const maxX = Math.max(p1.x, p2.x, p3.x, p4.x);
+      const minY = Math.min(p1.y, p2.y, p3.y, p4.y);
+      const maxY = Math.max(p1.y, p2.y, p3.y, p4.y);
+      classifyVectorRect(minX, minY, maxX - minX, maxY - minY, vp.width, vp.height, geom);
+    };
+
+    const recordSegment = (ax: number, ay: number, bx: number, by: number) => {
+      const p1 = applyMatrixPoint(ctm, ax, ay);
+      const p2 = applyMatrixPoint(ctm, bx, by);
+      const dx = Math.abs(p2.x - p1.x);
+      const dy = Math.abs(p2.y - p1.y);
+      if (dx >= 32 && dy <= 3.5) {
+        geom.horizontalLines.push({
+          x1: Math.min(p1.x, p2.x),
+          y1: (p1.y + p2.y) / 2,
+          x2: Math.max(p1.x, p2.x),
+          y2: (p1.y + p2.y) / 2,
+        });
+      } else if (dy >= 24 && dx <= 3.5) {
+        geom.verticalLines.push({
+          x1: (p1.x + p2.x) / 2,
+          y1: Math.min(p1.y, p2.y),
+          x2: (p1.x + p2.x) / 2,
+          y2: Math.max(p1.y, p2.y),
+        });
+      }
+    };
+
+    for (let i = 0; i < opList.fnArray.length; i++) {
+      const fn = opList.fnArray[i];
+      const args = opList.argsArray[i] as unknown[];
+
+      if (fn === OPS.save) {
+        stack.push([...ctm]);
+      } else if (fn === OPS.restore) {
+        ctm = stack.pop() || [...vp.transform];
+      } else if (fn === OPS.transform && Array.isArray(args) && args.length >= 6) {
+        ctm = multiplyMatrix2D(ctm, args as number[]);
+      } else if (fn === OPS.rectangle && Array.isArray(args) && args.length >= 4) {
+        recordTransformedRect(Number(args[0]), Number(args[1]), Number(args[2]), Number(args[3]));
+      } else if (fn === OPS.constructPath && Array.isArray(args) && args.length >= 2) {
+        const ops = args[0] as number[];
+        const coords = args[1] as number[];
+        if (Array.isArray(ops) && Array.isArray(coords)) {
+          let ci = 0;
+          let curX = 0;
+          let curY = 0;
+          let startX = 0;
+          let startY = 0;
+          let pathPts: Array<{ x: number; y: number }> = [];
+
+          const flushPathPoly = () => {
+            if (pathPts.length >= 4 && pathPts.length <= 10) {
+              const xs = pathPts.map((p) => p.x);
+              const ys = pathPts.map((p) => p.y);
+              const minX = Math.min(...xs);
+              const maxX = Math.max(...xs);
+              const minY = Math.min(...ys);
+              const maxY = Math.max(...ys);
+              classifyVectorRect(minX, minY, maxX - minX, maxY - minY, vp.width, vp.height, geom);
+            }
+            pathPts = [];
+          };
+
+          for (const subOp of ops) {
+            if (subOp === OPS.moveTo) {
+              flushPathPoly();
+              curX = coords[ci++] || 0;
+              curY = coords[ci++] || 0;
+              startX = curX;
+              startY = curY;
+              pathPts.push(applyMatrixPoint(ctm, curX, curY));
+            } else if (subOp === OPS.lineTo) {
+              const nx = coords[ci++] || 0;
+              const ny = coords[ci++] || 0;
+              recordSegment(curX, curY, nx, ny);
+              curX = nx;
+              curY = ny;
+              pathPts.push(applyMatrixPoint(ctm, curX, curY));
+            } else if (subOp === OPS.curveTo) {
+              ci += 4;
+              const nx = coords[ci++] || 0;
+              const ny = coords[ci++] || 0;
+              curX = nx;
+              curY = ny;
+              pathPts.push(applyMatrixPoint(ctm, curX, curY));
+            } else if (subOp === OPS.curveTo2 || subOp === OPS.curveTo3) {
+              ci += 2;
+              const nx = coords[ci++] || 0;
+              const ny = coords[ci++] || 0;
+              curX = nx;
+              curY = ny;
+              pathPts.push(applyMatrixPoint(ctm, curX, curY));
+            } else if (subOp === OPS.closePath) {
+              recordSegment(curX, curY, startX, startY);
+              flushPathPoly();
+            } else if (subOp === OPS.rectangle) {
+              const rx = coords[ci++] || 0;
+              const ry = coords[ci++] || 0;
+              const rw = coords[ci++] || 0;
+              const rh = coords[ci++] || 0;
+              recordTransformedRect(rx, ry, rw, rh);
+            }
+          }
+          flushPathPoly();
+        }
+      } else if (
+        fn === OPS.paintImageXObject ||
+        fn === OPS.paintInlineImageXObject ||
+        fn === OPS.paintImageMaskXObject
+      ) {
+        // In PDF, images are painted inside the unit square [0, 0] -> [1, 1] transformed by CTM
+        const p1 = applyMatrixPoint(ctm, 0, 0);
+        const p2 = applyMatrixPoint(ctm, 1, 0);
+        const p3 = applyMatrixPoint(ctm, 0, 1);
+        const p4 = applyMatrixPoint(ctm, 1, 1);
+        const minX = Math.min(p1.x, p2.x, p3.x, p4.x);
+        const maxX = Math.max(p1.x, p2.x, p3.x, p4.x);
+        const minY = Math.min(p1.y, p2.y, p3.y, p4.y);
+        const maxY = Math.max(p1.y, p2.y, p3.y, p4.y);
+        const w = maxX - minX;
+        const h = maxY - minY;
+        if (w >= 26 && h >= 26 && !(w > vp.width * 0.88 && h > vp.height * 0.85)) {
+          const dup = geom.images.some(
+            (im) => Math.abs(im.x - minX) < 8 && Math.abs(im.y - minY) < 8
+          );
+          if (!dup) geom.images.push({ x: minX, y: minY, width: w, height: h });
+        }
+      }
+    }
+  } catch {
+    // Graceful fallback: text analysis continues even if operator list has unsupported ops
+  }
+
+  return geom;
+}
+
 /**
- * Analyzes an active PDF using PDF.js text layer to detect lesson titles, printed vs PDF page numbers,
- * scanned pages, and interactive question regions with normalized PDF-page coordinates.
+ * Local browser-only OCR fallback (using existing tesseract.js) for scanned/image-only PDF pages.
+ * Converts Tesseract line/word bounding boxes directly into PDF-point TextLineBlocks.
+ */
+async function runLocalOcrOnPdfPage(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  page: any,
+  pageWidth: number,
+  pageHeight: number
+): Promise<TextLineBlock[]> {
+  if (typeof document === 'undefined') return [];
+  const scale = 2.0;
+  const vp = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(vp.width);
+  canvas.height = Math.round(vp.height);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return [];
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: ctx, viewport: vp, canvas }).promise;
+
+  const { createWorker } = await import('tesseract.js');
+  const worker = await createWorker('vie+eng', 1);
+  try {
+    const { data } = await worker.recognize(canvas);
+    const ocrLines: TextLineBlock[] = [];
+    const rawLines = (data as unknown as {
+      lines?: Array<{
+        text: string;
+        bbox: { x0: number; y0: number; x1: number; y1: number };
+        words?: Array<{ text: string; bbox: { x0: number; y0: number; x1: number; y1: number } }>;
+      }>;
+    }).lines;
+
+    if (Array.isArray(rawLines) && rawLines.length > 0) {
+      for (const ln of rawLines) {
+        const cleaned = cleanPdfTokenText(ln.text || '').trim();
+        if (!cleaned) continue;
+        const x = (ln.bbox?.x0 || 0) / scale;
+        const y = (ln.bbox?.y0 || 0) / scale;
+        const w = Math.max(8, ((ln.bbox?.x1 || 0) - (ln.bbox?.x0 || 0)) / scale);
+        const h = Math.max(8, ((ln.bbox?.y1 || 0) - (ln.bbox?.y0 || 0)) / scale);
+        const items: TextLineItem[] =
+          Array.isArray(ln.words) && ln.words.length > 0
+            ? ln.words
+                .map((wd) => ({
+                  str: cleanPdfTokenText(wd.text || '').trim(),
+                  x: (wd.bbox?.x0 || 0) / scale,
+                  y: (wd.bbox?.y0 || 0) / scale,
+                  width: Math.max(4, ((wd.bbox?.x1 || 0) - (wd.bbox?.x0 || 0)) / scale),
+                  height: Math.max(8, ((wd.bbox?.y1 || 0) - (wd.bbox?.y0 || 0)) / scale),
+                }))
+                .filter((it) => it.str.length > 0)
+            : [{ str: cleaned, x, y, width: w, height: h }];
+
+        const centerDist = Math.abs(x + w / 2 - pageWidth / 2);
+        ocrLines.push({
+          text: cleaned,
+          x,
+          y,
+          width: w,
+          height: h,
+          fontSize: h,
+          isCentered: centerDist < pageWidth * 0.14 && w < pageWidth * 0.78,
+          isAllCaps: isLineAllCaps(cleaned),
+          items,
+        });
+      }
+    }
+    return mergeLeftNumberBadges(
+      ocrLines.sort((a, b) => (Math.abs(a.y - b.y) > 6 ? a.y - b.y : a.x - b.x)),
+      pageWidth
+    );
+  } finally {
+    await worker.terminate().catch(() => {});
+  }
+}
+
+/**
+ * Analyzes an active PDF using PDF.js text layer + vector/image geometry (+ local OCR fallback on scanned pages)
+ * to detect lesson titles, printed vs PDF page numbers, and interactive question regions.
  * STRICT RULE: Never modifies original PDF text and never fabricates/guesses answer keys.
  */
 export async function detectQuestionsFromPdfPages(
@@ -1673,18 +2531,29 @@ export async function detectQuestionsFromPdfPages(
   options?: {
     sourcePdfPages?: number[];
     printedPageOffset?: number | null;
+    enableOcrFallback?: boolean;
+    onProgress?: (statusText: string) => void;
   }
 ): Promise<PdfDetectionResult> {
   const handle = await openPdfDocument(pdfBytes);
+  const enableOcr = options?.enableOcrFallback !== false;
 
   try {
     const totalPages = handle.proxy.numPages;
     const extractedPages: ExtractedPageInput[] = [];
+    const ocrUsedPages: number[] = [];
 
     for (let i = 0; i < totalPages; i++) {
+      const sourcePdfNum = options?.sourcePdfPages?.[i] ?? i + 1;
+      options?.onProgress?.(`Đang phân tích trang ${i + 1}/${totalPages} (đọc chữ, ô chọn, bảng biểu)...`);
+
       const page = await handle.proxy.getPage(i + 1);
       const vp = page.getViewport({ scale: 1 });
-      const textContent = await page.getTextContent();
+      const [textContent, geometry] = await Promise.all([
+        page.getTextContent(),
+        extractPageGeometry(page, vp),
+      ]);
+
       const rawItems = (textContent.items || []) as Array<{
         str?: string;
         transform?: number[];
@@ -1693,11 +2562,31 @@ export async function detectQuestionsFromPdfPages(
       }>;
       const validItems = rawItems.filter(
         (it): it is { str: string; transform: number[]; width?: number; height?: number } =>
-          typeof it.str === 'string' && Array.isArray(it.transform) && it.str.trim().length > 0
+          typeof it.str === 'string' && Array.isArray(it.transform) && cleanPdfTokenText(it.str).trim().length > 0
       );
 
-      const sourcePdfNum = options?.sourcePdfPages?.[i] ?? i + 1;
-      const lines = groupTextItemsIntoLines(validItems, vp.height, vp.width);
+      let lines = groupTextItemsIntoLines(validItems, vp.height, vp.width);
+      let effectiveTextCount = validItems.length;
+      let usedOcr = false;
+
+      // Local OCR fallback when a page is scanned / image-only (< 6 text items) in browser
+      if (effectiveTextCount < 6 && enableOcr && typeof document !== 'undefined') {
+        try {
+          options?.onProgress?.(
+            `Trang ${sourcePdfNum} là trang ảnh — đang đọc chữ bằng OCR cục bộ...`
+          );
+          const ocrLines = await runLocalOcrOnPdfPage(page, vp.width, vp.height);
+          if (ocrLines.length >= 2) {
+            lines = ocrLines;
+            effectiveTextCount = ocrLines.reduce((s, l) => s + l.items.length, 0);
+            usedOcr = true;
+            ocrUsedPages.push(sourcePdfNum);
+          }
+        } catch {
+          // Offline without cached tessdata or OCR failure -> continue gracefully as scan
+        }
+      }
+
       const detectedPrinted = detectPrintedPageNumber(lines, vp.height);
       const printedPageLabel =
         typeof options?.printedPageOffset === 'number'
@@ -1710,12 +2599,20 @@ export async function detectQuestionsFromPdfPages(
         printedPageLabel,
         width: vp.width,
         height: vp.height,
-        textItemCount: validItems.length,
+        textItemCount: effectiveTextCount,
         lines,
+        geometry,
+        usedOcr,
       });
     }
 
-    return analyzeExtractedPagesForQuestions(extractedPages);
+    const result = analyzeExtractedPagesForQuestions(extractedPages);
+    if (ocrUsedPages.length > 0) {
+      result.notes.unshift(
+        `Đã tự động đọc chữ bằng OCR cục bộ trên trang ảnh ${ocrUsedPages.join(', ')}. Thầy cô nên xem lướt nhanh các câu hỏi vừa nhận diện.`
+      );
+    }
+    return result;
   } finally {
     await handle.destroy().catch(() => {});
   }

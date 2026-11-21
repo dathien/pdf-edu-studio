@@ -159,11 +159,39 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
       {/* Main Scrollable Form */}
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
         {question.classificationStatus === 'unclassified' ? (
-          <div className="rounded-xl bg-amber-50 border-2 border-amber-400 px-3.5 py-3 text-[15.5px] text-amber-950 flex items-start gap-2.5 leading-relaxed">
-            <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
-            <span>
-              <strong>Chưa xác định dạng tự động:</strong> Thầy cô hãy chọn đúng dạng câu hỏi ở mục <strong>1. Loại câu hỏi</strong> bên dưới rồi nhấn <strong>Lưu câu hỏi</strong>. Câu hỏi này sẽ chưa hiển thị cho học sinh cho đến khi được phân loại.
-            </span>
+          <div className="rounded-xl bg-amber-50 border-2 border-amber-400 p-4 space-y-3 text-[16px] text-amber-950 leading-relaxed">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <div className="font-bold">Chưa xác định dạng tự động</div>
+                <p className="text-[15.5px] text-slate-800">
+                  <strong>Câu hỏi gốc:</strong> {question.prompt}
+                </p>
+                <p className="text-[15px] text-amber-900">
+                  {question.unclassifiedReason ||
+                    'Đề bài chưa ghi rõ lệnh chọn, nối, điền hay viết và không có ô chọn/dòng kẻ tương ứng.'}
+                </p>
+              </div>
+            </div>
+            {question.suggestedTypes && question.suggestedTypes.length > 0 && (
+              <div className="space-y-1.5 pt-1">
+                <div className="text-[15px] font-bold text-[#164E63]">
+                  Chọn nhanh 1 dạng bài đề xuất (1 chạm):
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {question.suggestedTypes.map((st) => (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => onChangeQuestionType(st)}
+                      className="min-h-[44px] px-3.5 py-1.5 rounded-xl bg-[#087F70] hover:bg-[#06695d] text-white font-bold text-[15.5px] cursor-pointer shadow-2xs"
+                    >
+                      Chọn: {QUESTION_TYPE_META[st].shortLabel}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           question.detectionNote && (
