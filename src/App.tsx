@@ -1,6 +1,7 @@
 import React, { Suspense, useCallback, useEffect, useRef } from 'react';
 import { Loader2, X } from 'lucide-react';
 import { HeaderBar } from './components/HeaderBar';
+import { PwaInstallManager } from './components/PwaInstallManager';
 import { DocumentTabs } from './components/DocumentTabs';
 import { RibbonToolbar } from './components/RibbonToolbar';
 import { StatusBar } from './components/StatusBar';
@@ -28,6 +29,11 @@ const RightSidebarShell = createRetryableLazy(() =>
 const UserGuidePage = createRetryableLazy(() =>
   import('./features/help/UserGuidePage').then((m) => ({
     default: m.UserGuidePage,
+  }))
+);
+const InteractiveWorksheetHub = createRetryableLazy(() =>
+  import('./features/interactive/InteractiveWorksheetHub').then((m) => ({
+    default: m.InteractiveWorksheetHub,
   }))
 );
 const DynamicGeometryModal = createRetryableLazy(() =>
@@ -88,6 +94,8 @@ export default function App() {
   const guideView = useStudioStore((s) => s.guideView);
   const openGuide = useStudioStore((s) => s.openGuide);
   const closeGuide = useStudioStore((s) => s.closeGuide);
+  const interactiveView = useStudioStore((s) => s.interactiveView);
+  const closeInteractive = useStudioStore((s) => s.closeInteractive);
   const toasts = useStudioStore((s) => s.toasts);
   const dismissToast = useStudioStore((s) => s.dismissToast);
   const busyMessage = useStudioStore((s) => s.busyMessage);
@@ -117,9 +125,10 @@ export default function App() {
 
   const returnHome = useCallback(() => {
     closeGuide();
+    closeInteractive();
     setActiveModal(null);
     setActiveDoc(null);
-  }, [closeGuide, setActiveModal, setActiveDoc]);
+  }, [closeGuide, closeInteractive, setActiveModal, setActiveDoc]);
 
   useKeyboardShortcuts(triggerOpenFile);
 
@@ -140,7 +149,8 @@ export default function App() {
       {!isFullscreen && (
         <>
           <HeaderBar pwa={pwa} />
-          {!guideView.open && (
+          <PwaInstallManager pwa={pwa} variant="inline-guide-panel" />
+          {!guideView.open && !interactiveView.open && (
             <>
               <DocumentTabs />
               <RibbonToolbar />
@@ -169,11 +179,31 @@ export default function App() {
         </FeatureErrorBoundary>
       )}
 
-      {/* Main Workspace Area — kept mounted via CSS hide when Guide is open so zero unsaved work or scroll state is lost */}
+      {/* Integrated Interactive PDF Worksheet Subsystem (mounted on demand, preserves main PDF edits) */}
+      {interactiveView.open && !isFullscreen && (
+        <FeatureErrorBoundary featureName="Bài tập PDF tương tác" onGoHome={returnHome}>
+          {(retryNonce) => (
+            <Suspense
+              fallback={
+                <div className="flex-1 flex items-center justify-center bg-[#F4F8F7]">
+                  <div className="bg-white rounded-xl px-5 py-3.5 shadow-md flex items-center gap-2.5 text-[15.5px] font-semibold text-[#164E63]">
+                    <Loader2 className="w-5 h-5 animate-spin text-[#087F70]" />
+                    <span>Đang mở phân hệ Bài tập PDF tương tác...</span>
+                  </div>
+                </div>
+              }
+            >
+              <InteractiveWorksheetHub retryNonce={retryNonce} />
+            </Suspense>
+          )}
+        </FeatureErrorBoundary>
+      )}
+
+      {/* Main Workspace Area — kept mounted via CSS hide when Guide/Interactive is open so zero unsaved work or scroll state is lost */}
       <div
         data-tour="workspace-main"
         className={`flex-1 flex min-h-0 min-w-0 overflow-hidden ${
-          guideView.open && !isFullscreen ? 'hidden' : ''
+          (guideView.open || interactiveView.open) && !isFullscreen ? 'hidden' : ''
         }`}
       >
         {activeDoc ? (
@@ -243,7 +273,7 @@ export default function App() {
       </div>
 
       {/* Bottom Status Bar */}
-      {!isFullscreen && !guideView.open && (
+      {!isFullscreen && !guideView.open && !interactiveView.open && (
         <StatusBar
           onFitWidth={() => fitHandlersRef.current.fitWidth()}
           onFitPage={() => fitHandlersRef.current.fitPage()}
@@ -348,12 +378,10 @@ export default function App() {
               </FeatureErrorBoundary>
             )}
             {activeModal === 'settings' && (
-              <FeatureErrorBoundary featureName="Cài đặt hệ thống" onGoHome={returnHome}>
+              <FeatureErrorBoundary featureName="Thiết lập hệ thống" onGoHome={returnHome}>
                 {(retryNonce) => (
                   <SettingsModal
-                    offlineStatus={pwa.offlineStatus}
-                    offlineDetail={pwa.offlineDetail}
-                    onPrefetchOffline={pwa.prefetchOfflineAssets}
+                    pwa={pwa}
                     onClose={() => setActiveModal(null)}
                     retryNonce={retryNonce}
                   />

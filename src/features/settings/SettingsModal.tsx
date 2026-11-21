@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   CheckCircle2,
   Database,
-  Download,
+  FileJson,
   ShieldCheck,
   Trash2,
   Upload,
@@ -11,21 +11,15 @@ import {
 import { storageService } from '../../services/storageService';
 import { triggerDownload } from '../../engines/pdf/pdfEngine';
 import { useStudioStore } from '../../stores/useStudioStore';
-import type { OfflineReadiness } from '../../hooks/usePWAInstall';
+import type { PwaInstallController } from '../../hooks/usePWAInstall';
+import { PwaInstallManager } from '../../components/PwaInstallManager';
 
 interface SettingsModalProps {
-  offlineStatus: OfflineReadiness;
-  offlineDetail?: string;
-  onPrefetchOffline?: () => Promise<boolean>;
+  pwa: PwaInstallController;
   onClose: () => void;
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({
-  offlineStatus,
-  offlineDetail,
-  onPrefetchOffline,
-  onClose,
-}) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({ pwa, onClose }) => {
   const recentDocs = useStudioStore((s) => s.recentDocs);
   const savedSignatures = useStudioStore((s) => s.savedSignatures);
   const customShapes = useStudioStore((s) => s.customShapes);
@@ -50,7 +44,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
       `PDF_EDU_STUDIO_Sao_luu_${new Date().toISOString().slice(0, 10)}.json`
     );
-    notify('Đã xuất tệp sao lưu thư viện cá nhân & sổ điểm (.json)', 'success');
+    notify('Đã xuất tệp sao lưu dữ liệu cá nhân & sổ điểm (.json)', 'success');
   };
 
   const handleRestoreJson = async (files: FileList | null) => {
@@ -78,13 +72,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const offlineLabel =
-    offlineStatus === 'ready'
-      ? 'Sẵn sàng offline (đã xác nhận đủ tệp lõi, PDF Worker và font tiếng Việt)'
-      : offlineStatus === 'update-available'
+    pwa.offlineStatus === 'ready'
+      ? 'Sẵn sàng offline (đã xác nhận đủ tệp lõi, PDF Worker, MathLive và font tiếng Việt)'
+      : pwa.offlineStatus === 'update-available'
         ? 'Có phiên bản mới sẵn sàng cập nhật'
-        : offlineStatus === 'needs-assets'
+        : pwa.offlineStatus === 'needs-assets'
           ? 'Cần tải bổ sung tài nguyên ngoại tuyến'
-          : offlineStatus === 'preparing'
+          : pwa.offlineStatus === 'preparing'
             ? 'Đang chuẩn bị offline...'
             : 'Chưa thể xác nhận offline';
 
@@ -92,28 +86,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-200">
         <div className="bg-[#164E63] text-white px-5 py-3.5 flex items-center justify-between">
-          <h2 className="text-[19px] font-bold">Cài đặt & Quản lý Dữ liệu Cục bộ</h2>
-          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/15 cursor-pointer">
+          <h2 className="text-[19px] font-bold">Thiết lập & Quản lý Dữ liệu Cục bộ</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-white/15 cursor-pointer"
+            aria-label="Đóng cửa sổ thiết lập"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="p-5 space-y-5 text-[15px] text-slate-800 max-h-[80vh] overflow-y-auto">
+        <div className="p-5 space-y-5 text-[15px] text-slate-800 max-h-[82vh] overflow-y-auto">
+          {/* Dedicated PWA Install Section — clearly separated from JSON data backup */}
+          <PwaInstallManager pwa={pwa} variant="settings-card" />
+
           {/* Privacy & Offline status */}
           <div className="p-4 rounded-xl bg-[#F4F8F7] border border-teal-200/80 space-y-2">
-            <div className="flex items-center gap-2 font-bold text-[#164E63]">
+            <div className="flex items-center gap-2 font-bold text-[#164E63] text-[16px]">
               <ShieldCheck className="w-5 h-5 text-[#087F70]" />
               <span>Quyền riêng tư & Chế độ Ngoại tuyến</span>
             </div>
-            <p className="text-slate-700 leading-relaxed text-[14.5px]">
+            <p className="text-slate-700 leading-relaxed text-[15px]">
               PDF EDU STUDIO xử lý toàn bộ tài liệu PDF, công thức, hình vẽ, OCR và bảng điểm học sinh ngay trên thiết bị của thầy/cô. Không yêu cầu đăng nhập, không cần API key và không tải nội dung đề thi lên máy chủ ngoài.
             </p>
             <div className="pt-1 space-y-1.5">
               <div
-                className={`flex items-center gap-2 text-[14.5px] font-semibold ${
-                  offlineStatus === 'ready'
+                className={`flex items-center gap-2 text-[15px] font-semibold ${
+                  pwa.offlineStatus === 'ready'
                     ? 'text-emerald-700'
-                    : offlineStatus === 'needs-assets'
+                    : pwa.offlineStatus === 'needs-assets'
                       ? 'text-amber-700'
                       : 'text-[#164E63]'
                 }`}
@@ -121,14 +123,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
                 <span>Trạng thái offline: {offlineLabel}</span>
               </div>
-              {offlineDetail && (
-                <p className="text-[13.5px] text-slate-600 leading-relaxed">{offlineDetail}</p>
+              {pwa.offlineDetail && (
+                <p className="text-[15px] text-slate-600 leading-relaxed">{pwa.offlineDetail}</p>
               )}
-              {offlineStatus === 'needs-assets' && onPrefetchOffline && (
+              {pwa.offlineStatus === 'needs-assets' && (
                 <button
                   type="button"
-                  onClick={() => onPrefetchOffline()}
-                  className="mt-1 px-3.5 py-1.5 rounded-lg bg-[#087F70] hover:bg-[#06695d] text-white text-[13.5px] font-semibold cursor-pointer"
+                  onClick={() => pwa.prefetchOfflineAssets()}
+                  className="mt-1 px-3.5 py-1.5 rounded-lg bg-[#087F70] hover:bg-[#06695d] text-white text-[15px] font-semibold cursor-pointer"
                 >
                   Tải bổ sung tài nguyên dùng offline ngay
                 </button>
@@ -138,30 +140,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Local Storage Summary */}
           <div className="space-y-2.5">
-            <div className="flex items-center gap-2 font-bold text-[#164E63]">
+            <div className="flex items-center gap-2 font-bold text-[#164E63] text-[16px]">
               <Database className="w-5 h-5 text-[#087F70]" />
               <span>Dữ liệu đang lưu trên trình duyệt này (IndexedDB)</span>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
               <div className="p-3 rounded-xl border border-slate-200 bg-slate-50">
                 <div className="text-[20px] font-bold text-[#164E63] tabular-nums">{recentDocs.length}</div>
-                <div className="text-[13px] text-slate-600">Tài liệu gần đây</div>
+                <div className="text-[15px] text-slate-600">Tài liệu gần đây</div>
               </div>
               <div className="p-3 rounded-xl border border-slate-200 bg-slate-50">
                 <div className="text-[20px] font-bold text-[#164E63] tabular-nums">{gradedPapers.length}</div>
-                <div className="text-[13px] text-slate-600">Bài trong sổ điểm</div>
+                <div className="text-[15px] text-slate-600">Bài trong sổ điểm</div>
               </div>
               <div className="p-3 rounded-xl border border-slate-200 bg-slate-50">
                 <div className="text-[20px] font-bold text-[#164E63] tabular-nums">{savedSignatures.length}</div>
-                <div className="text-[13px] text-slate-600">Chữ ký hình ảnh</div>
+                <div className="text-[15px] text-slate-600">Chữ ký hình ảnh</div>
               </div>
               <div className="p-3 rounded-xl border border-slate-200 bg-slate-50">
                 <div className="text-[20px] font-bold text-[#164E63] tabular-nums">{customShapes.length}</div>
-                <div className="text-[13px] text-slate-600">Hình vẽ cá nhân</div>
+                <div className="text-[15px] text-slate-600">Hình vẽ cá nhân</div>
               </div>
             </div>
-            <p className="text-[13px] text-slate-500">
-              Lưu ý: Dữ liệu cục bộ có thể bị xóa nếu người dùng xóa bộ nhớ trình duyệt (Clear site data). Thầy/cô nên xuất tệp sao lưu JSON định kỳ.
+            <p className="text-[15px] text-slate-600 leading-relaxed">
+              Sao lưu dữ liệu cá nhân (chữ ký, hình vẽ tự tạo, mẫu nhận xét và sổ điểm) ra tệp JSON dự phòng để chuyển sang thiết bị khác. Lưu ý: tệp JSON này chỉ dùng để sao lưu dữ liệu, không phải bộ cài đặt ứng dụng.
             </p>
           </div>
 
@@ -170,13 +172,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <button
               type="button"
               onClick={handleBackupJson}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#087F70] hover:bg-[#06695d] text-white font-semibold cursor-pointer"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-semibold text-[15px] cursor-pointer"
             >
-              <Download className="w-4 h-4" /> Sao lưu thư viện & Sổ điểm (.json)
+              <FileJson className="w-4 h-4 text-[#164E63]" /> Xuất tệp sao lưu dữ liệu (.json)
             </button>
-            <label className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 font-semibold cursor-pointer">
-              <Upload className="w-4 h-4" /> Khôi phục từ tệp sao lưu
-              <input type="file" accept=".json,application/json" className="hidden" onChange={(e) => handleRestoreJson(e.target.files)} />
+            <label className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-semibold text-[15px] cursor-pointer">
+              <Upload className="w-4 h-4 text-[#164E63]" /> Khôi phục từ tệp sao lưu
+              <input
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={(e) => handleRestoreJson(e.target.files)}
+              />
             </label>
           </div>
 
@@ -186,7 +193,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <button
                 type="button"
                 onClick={() => setConfirmClear(true)}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-[#DC2626] font-semibold cursor-pointer"
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-[#DC2626] font-semibold text-[15px] cursor-pointer"
               >
                 <Trash2 className="w-4 h-4" /> Xóa toàn bộ dữ liệu cá nhân (Máy dùng chung)
               </button>
@@ -218,7 +225,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             )}
           </div>
 
-          <div className="pt-2 border-t border-slate-100 text-center text-[13.5px] text-slate-500">
+          <div className="pt-2 border-t border-slate-100 text-center text-[15px] text-slate-500">
             Copyright © 2026 – Phát triển bởi Thầy Hồ Nguyễn Đa Thiện
           </div>
         </div>

@@ -33,6 +33,18 @@ export async function openFilesInStudio(files: FileList | File[]): Promise<void>
     for (const file of list) {
       const lower = file.name.toLowerCase();
       if (lower.endsWith('.pdfedu')) {
+        const { peekPdfEduPackageKind } = await import('../features/interactive/interactiveEngine');
+        const pkgKind = await peekPdfEduPackageKind(file);
+        if (pkgKind === 'worksheet' || pkgKind === 'submission' || pkgKind === 'teacher-master') {
+          const targetTab =
+            pkgKind === 'worksheet'
+              ? 'solve'
+              : pkgKind === 'submission'
+                ? 'grade'
+                : 'author';
+          store.openInteractive(targetTab, file);
+          continue;
+        }
         const { loadProjectBundle } = await loadPdfEngine();
         const loaded = await loadProjectBundle(file);
         store.openDocument({

@@ -215,6 +215,7 @@ export const RibbonToolbar: React.FC = () => {
   const setRightPanelMode = useStudioStore((s) => s.setRightPanelMode);
   const setActiveModal = useStudioStore((s) => s.setActiveModal);
   const openGuide = useStudioStore((s) => s.openGuide);
+  const openInteractive = useStudioStore((s) => s.openInteractive);
   const documents = useStudioStore((s) => s.documents);
   const activeDocId = useStudioStore((s) => s.activeDocId);
   const undo = useStudioStore((s) => s.undo);
@@ -367,6 +368,15 @@ export const RibbonToolbar: React.FC = () => {
               </button>
             );
           })}
+          <button
+            type="button"
+            onClick={() => openInteractive('author')}
+            className="ml-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-t-md border-b-2 border-transparent text-[#087F70] bg-[#E6F1EF]/70 hover:bg-[#087F70] hover:text-white text-[15.5px] font-bold whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+            title="Mở phân hệ Bài tập PDF tương tác (Tạo bài, Làm bài, Bài đã lưu, Chấm bài)"
+          >
+            <ListChecks className="w-4 h-4 shrink-0" />
+            <span>Bài tập PDF</span>
+          </button>
         </div>
 
         {/* Always-accessible quick Undo / Redo / Save on right side of tab bar */}

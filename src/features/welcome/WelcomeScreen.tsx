@@ -3,6 +3,7 @@ import {
   BookOpen,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
   Clock,
   Download,
   Eye,
@@ -46,6 +47,7 @@ export const WelcomeScreen: React.FC = () => {
   const removeRecentDoc = useStudioStore((s) => s.removeRecentDoc);
   const setActiveModal = useStudioStore((s) => s.setActiveModal);
   const openGuide = useStudioStore((s) => s.openGuide);
+  const openInteractive = useStudioStore((s) => s.openInteractive);
 
   const [subjectFilter, setSubjectFilter] = useState<'all' | SubjectCategory>('all');
   const [gradeFilter, setGradeFilter] = useState<'all' | GradeLevel>('all');
@@ -273,8 +275,20 @@ export const WelcomeScreen: React.FC = () => {
             </div>
           </div>
 
-          {/* 6 Quick-Action Tiles */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-6 pt-6 border-t border-slate-100">
+          {/* Quick-Action Tiles */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 mt-6 pt-6 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => openInteractive('solve')}
+              className="flex flex-col items-start gap-2 p-3.5 rounded-xl border-2 border-[#087F70] bg-[#E6F1EF]/70 hover:bg-[#087F70] hover:text-white group transition-all text-left cursor-pointer"
+            >
+              <ClipboardList className="w-6 h-6 text-[#087F70] group-hover:text-white" />
+              <div>
+                <div className="text-[15px] font-bold text-[#164E63] group-hover:text-white">Bài tập PDF</div>
+                <div className="text-[14px] text-slate-600 group-hover:text-teal-50">Tương tác offline</div>
+              </div>
+            </button>
+
             <button
               type="button"
               onClick={() => singleOpenRef.current?.click()}

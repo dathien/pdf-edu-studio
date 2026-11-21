@@ -497,9 +497,9 @@ function renderIllustrationSvg(key: GuideIllustrationKey): React.ReactNode {
           <circle cx="78" cy="49" r="6" fill="#FBBF24" />
           <circle cx="98" cy="49" r="6" fill="#34D399" />
           <rect x="122" y="36" width="440" height="26" rx="13" fill="#F1F5F9" />
-          <text x="142" y="53" fontSize="12" fill="#334155">https://pdf-edu-studio... (Chrome / Edge / Cốc Cốc)</text>
-          <rect x="574" y="35" width="136" height="28" rx="6" fill="#087F70" stroke="#F59E0B" strokeWidth="2" />
-          <text x="642" y="53" textAnchor="middle" fontSize="11.5" fontWeight="700" fill="#FFFFFF">⬇ Cài app offline</text>
+          <text x="142" y="53" fontSize="12" fill="#334155">https://pdf-edu-studio... (Safari macOS / Chrome / Edge)</text>
+          <rect x="564" y="35" width="148" height="28" rx="6" fill="#087F70" stroke="#F59E0B" strokeWidth="2" />
+          <text x="638" y="53" textAnchor="middle" fontSize="11" fontWeight="700" fill="#FFFFFF">Cài PDF EDU STUDIO</text>
 
           {/* 4 honest offline states */}
           <rect x="34" y="96" width="692" height="238" rx="12" fill="#FFFFFF" stroke="#CBD5E1" />
@@ -538,7 +538,7 @@ function renderIllustrationSvg(key: GuideIllustrationKey): React.ReactNode {
         'ocr-scan': { tab: 'Chỉnh sửa', badge1: '1. Chỉnh thẳng trang', badge2: '2. Bật Đen trắng & Tương phản', badge3: '3. Chạy OCR Tiếng Việt', centerTitle: 'Nhận dạng chữ tiếng Việt từ tài liệu PDF scan cục bộ', centerSub: 'Sao chép chữ, tải .txt hoặc chèn trực tiếp lên trang PDF' },
         'watermark-pagenum': { tab: 'Bảo mật', badge1: '1. Bật Dấu chìm (Watermark)', badge2: '2. Chỉnh độ mờ 15%', badge3: '3. Bật Đánh số trang', centerTitle: 'Đóng dấu bản quyền "TÀI LIỆU GIẢNG DẠY" & Trang 1 / N', centerSub: 'Xem trước trực tiếp trên trang PDF và nhúng bền vững khi lưu' },
         'print-present': { tab: 'Hiển thị', badge1: '1. Xuất PDF / Ảnh PNG', badge2: '2. In tài liệu (Ctrl + P)', badge3: '3. Trình chiếu toàn màn hình', centerTitle: 'Chuẩn bị bản in A4 sắc nét & Trình chiếu giảng dạy trên lớp', centerSub: 'Nhấn phím Esc bất cứ lúc nào để thoát chế độ trình chiếu' },
-        'backup-restore': { tab: 'Tệp', badge1: '1. Mở mục Cài đặt', badge2: '2. Xuất sao lưu (.json)', badge3: '3. Khôi phục / Xóa máy chung', centerTitle: 'Bảo vệ thư viện cá nhân & sổ điểm bằng tệp sao lưu JSON', centerSub: 'Dễ dàng mang sang máy tính mới hoặc dọn sạch trên máy dùng chung' },
+        'backup-restore': { tab: 'Tệp', badge1: '1. Mở mục Thiết lập', badge2: '2. Xuất sao lưu (.json)', badge3: '3. Khôi phục / Xóa máy chung', centerTitle: 'Bảo vệ thư viện cá nhân & sổ điểm bằng tệp sao lưu JSON', centerSub: 'Dễ dàng mang sang máy tính mới hoặc dọn sạch trên máy dùng chung' },
       };
       const m = metaMap[key] || metaMap['open-save-pdf'];
       return (

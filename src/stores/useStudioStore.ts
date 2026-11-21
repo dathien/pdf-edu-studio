@@ -19,6 +19,7 @@ import type {
 import { createDefaultGradingSession, computeGradingSummary } from '../engines/grading/gradingEngine';
 import { storageService } from '../services/storageService';
 import type { GuideGroupId } from '../features/help/guideData';
+import type { InteractiveSubTab } from '../types/interactive';
 
 export type ActiveModal =
   | null
@@ -64,6 +65,7 @@ interface StudioState {
   activeModal: ActiveModal;
   editingFormulaObjectId: string | null;
   guideView: { open: boolean; groupId: GuideGroupId; featureId?: string };
+  interactiveView: { open: boolean; tab: InteractiveSubTab; pendingPackageFile: File | null };
 
   // Tool presets
   penColor: string;
@@ -108,6 +110,10 @@ interface StudioState {
   setIsFullscreen: (v: boolean) => void;
   openGuide: (groupId?: GuideGroupId, featureId?: string) => void;
   closeGuide: () => void;
+  openInteractive: (tab?: InteractiveSubTab, pendingFile?: File | null) => void;
+  setInteractiveTab: (tab: InteractiveSubTab) => void;
+  closeInteractive: () => void;
+  clearPendingInteractiveFile: () => void;
 
   setPenConfig: (patch: Partial<{ penColor: string; penWidth: number; penOpacity: number }>) => void;
   setStampPreset: (code: string, label: string, color: string) => void;
@@ -236,6 +242,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   activeModal: null,
   editingFormulaObjectId: null,
   guideView: { open: false, groupId: 'open-save-print', featureId: 'mo-va-tao-pdf' },
+  interactiveView: { open: false, tab: 'solve', pendingPackageFile: null },
 
   penColor: '#DC2626',
   penWidth: 2.5,
@@ -351,6 +358,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   openGuide(groupId, featureId) {
     set((s) => ({
       activeModal: null,
+      interactiveView: { ...s.interactiveView, open: false },
       guideView: {
         open: true,
         groupId: groupId || s.guideView.groupId || 'open-save-print',
@@ -362,6 +370,36 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   closeGuide() {
     set((s) => ({
       guideView: { ...s.guideView, open: false },
+    }));
+  },
+
+  openInteractive(tab, pendingFile = null) {
+    set((s) => ({
+      activeModal: null,
+      guideView: { ...s.guideView, open: false },
+      interactiveView: {
+        open: true,
+        tab: tab || s.interactiveView.tab || 'solve',
+        pendingPackageFile: pendingFile ?? s.interactiveView.pendingPackageFile,
+      },
+    }));
+  },
+
+  setInteractiveTab(tab) {
+    set((s) => ({
+      interactiveView: { ...s.interactiveView, open: true, tab },
+    }));
+  },
+
+  closeInteractive() {
+    set((s) => ({
+      interactiveView: { ...s.interactiveView, open: false },
+    }));
+  },
+
+  clearPendingInteractiveFile() {
+    set((s) => ({
+      interactiveView: { ...s.interactiveView, pendingPackageFile: null },
     }));
   },
 
