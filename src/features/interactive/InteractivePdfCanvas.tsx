@@ -19,6 +19,10 @@ import {
 import { openPdfDocument, type LoadedPdfHandle } from '../../engines/pdf/pdfEngine';
 import { QuestionRegionWidget } from './QuestionRegionWidget';
 import type {
+  PageEditableElements,
+  PdfEditableElement,
+} from './pdfDirectContentEditor';
+import type {
   InteractiveQuestion,
   PlainAnnotationKind,
   PlainPdfAnnotation,
@@ -73,8 +77,17 @@ interface InteractivePdfCanvasProps {
   onSelectQuestion?: (id: string | null) => void;
   onPlaceAtPoint?: (pageIndex: number, pdfX: number, pdfY: number) => void;
   onUpdateRegion?: (qId: string, patch: Partial<InteractiveQuestion['region']>) => void;
+  onUpdateQuestion?: (qId: string, patch: Partial<InteractiveQuestion>) => void;
   onDeleteQuestion?: (qId: string) => void;
   onChangeAnswer?: (qId: string, next: StudentQuestionAnswer) => void;
+  // Direct Editing on PDF ("CHỈNH SỬA BÀI TẬP")
+  directEditMode?: boolean;
+  directEditSubMode?: 'content' | 'interactive';
+  editablePages?: PageEditableElements[];
+  selectedPdfElement?: PdfEditableElement | null;
+  onSelectPdfElement?: (el: PdfEditableElement | null) => void;
+  placingImageActive?: boolean;
+  onClickPageToAddImage?: (pageIndex: number, pdfX: number, pdfY: number) => void;
 }
 
 const SinglePdfPageCanvas: React.FC<{
@@ -103,9 +116,17 @@ const SinglePdfPageCanvas: React.FC<{
   onSelectQuestion?: (id: string | null) => void;
   onPlaceAtPoint?: (pageIndex: number, pdfX: number, pdfY: number) => void;
   onUpdateRegion?: (qId: string, patch: Partial<InteractiveQuestion['region']>) => void;
+  onUpdateQuestion?: (qId: string, patch: Partial<InteractiveQuestion>) => void;
   onDeleteQuestion?: (qId: string) => void;
   onChangeAnswer?: (qId: string, next: StudentQuestionAnswer) => void;
   onOpenAnswerDrawer?: (qId: string) => void;
+  directEditMode?: boolean;
+  directEditSubMode?: 'content' | 'interactive';
+  pageEditable?: PageEditableElements;
+  selectedPdfElementId?: string | null;
+  onSelectPdfElement?: (el: PdfEditableElement | null) => void;
+  placingImageActive?: boolean;
+  onClickPageToAddImage?: (pageIndex: number, pdfX: number, pdfY: number) => void;
 }> = ({
   handle,
   dim,
@@ -132,9 +153,17 @@ const SinglePdfPageCanvas: React.FC<{
   onSelectQuestion,
   onPlaceAtPoint,
   onUpdateRegion,
+  onUpdateQuestion,
   onDeleteQuestion,
   onChangeAnswer,
   onOpenAnswerDrawer,
+  directEditMode = false,
+  directEditSubMode = 'interactive',
+  pageEditable,
+  selectedPdfElementId,
+  onSelectPdfElement,
+  placingImageActive = false,
+  onClickPageToAddImage,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pageContainerRef = useRef<HTMLDivElement>(null);
@@ -395,11 +424,18 @@ const SinglePdfPageCanvas: React.FC<{
         ref={pageContainerRef}
         style={{ width: `${cssW}px`, height: `${cssH}px` }}
         onClick={(e) => {
-          if (mode === 'author' && placingActive && onPlaceAtPoint) {
+          if (mode === 'author' && placingImageActive && onClickPageToAddImage) {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const pdfX = Math.max(12, Math.round((e.clientX - rect.left) / zoom));
+            const pdfY = Math.max(12, Math.round((e.clientY - rect.top) / zoom));
+            onClickPageToAddImage(dim.pageIndex, pdfX, pdfY);
+          } else if (mode === 'author' && placingActive && onPlaceAtPoint) {
             const rect = e.currentTarget.getBoundingClientRect();
             const pdfX = Math.max(12, Math.round((e.clientX - rect.left) / zoom));
             const pdfY = Math.max(12, Math.round((e.clientY - rect.top) / zoom));
             onPlaceAtPoint(dim.pageIndex, pdfX, pdfY);
+          } else if (mode === 'author' && directEditMode && directEditSubMode === 'content') {
+            onSelectPdfElement?.(null);
           } else if (mode === 'author' && onSelectQuestion) {
             onSelectQuestion(null);
           } else if (mode === 'solve' && directTool === 'select') {
@@ -407,7 +443,7 @@ const SinglePdfPageCanvas: React.FC<{
           }
         }}
         className={`relative bg-white shadow-md border border-slate-300 rounded-sm overflow-hidden ${
-          placingActive
+          placingActive || placingImageActive
             ? 'cursor-crosshair ring-2 ring-[#087F70]'
             : isDrawingDirect
               ? 'cursor-crosshair'
@@ -532,7 +568,13 @@ const SinglePdfPageCanvas: React.FC<{
         </svg>
 
         {/* PDF-Coordinate-Locked Structured Question Regions */}
-        <div className={`absolute inset-0 ${isDrawingDirect ? 'pointer-events-none' : ''}`}>
+        <div
+          className={`absolute inset-0 ${
+            isDrawingDirect || (mode === 'author' && directEditMode && directEditSubMode === 'content')
+              ? 'pointer-events-none opacity-45'
+              : ''
+          }`}
+        >
           {questions.map((q) => (
             <QuestionRegionWidget
               key={q.id}
@@ -546,14 +588,106 @@ const SinglePdfPageCanvas: React.FC<{
               answer={answers?.[q.id]}
               teacherKey={teacherKeys?.[q.id]}
               gradingDetail={gradingDetails?.[q.id]}
+              directEditInteractive={Boolean(directEditMode && directEditSubMode === 'interactive')}
               onSelect={() => onSelectQuestion?.(q.id)}
               onUpdateRegion={(patch) => onUpdateRegion?.(q.id, patch)}
+              onUpdateQuestion={(patch) => onUpdateQuestion?.(q.id, patch)}
               onDeleteQuestion={() => onDeleteQuestion?.(q.id)}
               onChangeAnswer={(next) => onChangeAnswer?.(q.id, next)}
               onOpenAnswerDrawer={onOpenAnswerDrawer}
             />
           ))}
         </div>
+
+        {/* Direct PDF Content Edit Hit Targets (Text lines, Table cells, Images — 100% transparent, zoom-accurate!) */}
+        {mode === 'author' &&
+          directEditMode &&
+          directEditSubMode === 'content' &&
+          !placingImageActive &&
+          pageEditable && (
+            <div className="absolute inset-0 z-30 pointer-events-none">
+              {/* Detected Images */}
+              {pageEditable.images.map((im) => {
+                const isSel = selectedPdfElementId === im.id;
+                return (
+                  <button
+                    key={im.id}
+                    type="button"
+                    style={{
+                      left: `${im.nx * cssW}px`,
+                      top: `${im.ny * cssH}px`,
+                      width: `${Math.max(24, im.nw * cssW)}px`,
+                      height: `${Math.max(24, im.nh * cssH)}px`,
+                    }}
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      onSelectPdfElement?.(im);
+                    }}
+                    title="Nhấn để thay thế hoặc chỉnh kích thước hình ảnh này"
+                    className={`pointer-events-auto absolute rounded-sm transition-colors cursor-pointer ${
+                      isSel
+                        ? 'border-2 border-amber-600 bg-amber-300/15 ring-2 ring-amber-300/60'
+                        : 'border border-dashed border-amber-500/60 hover:border-amber-600 hover:bg-amber-200/15'
+                    }`}
+                  />
+                );
+              })}
+
+              {/* Detected Table Cells */}
+              {pageEditable.tableCells.map((cell) => {
+                const isSel = selectedPdfElementId === cell.id;
+                return (
+                  <button
+                    key={cell.id}
+                    type="button"
+                    style={{
+                      left: `${cell.nx * cssW}px`,
+                      top: `${cell.ny * cssH}px`,
+                      width: `${Math.max(20, cell.nw * cssW)}px`,
+                      height: `${Math.max(14, cell.nh * cssH)}px`,
+                    }}
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      onSelectPdfElement?.(cell);
+                    }}
+                    title={`Ô bảng (Dòng ${cell.row + 1}, Cột ${cell.col + 1}): nhấn để sửa nội dung ô`}
+                    className={`pointer-events-auto absolute transition-colors cursor-pointer ${
+                      isSel
+                        ? 'border-2 border-blue-600 bg-blue-300/15 ring-2 ring-blue-300/60'
+                        : 'border border-dashed border-blue-500/50 hover:border-blue-600 hover:bg-blue-200/15'
+                    }`}
+                  />
+                );
+              })}
+
+              {/* Detected Text Blocks */}
+              {pageEditable.textBlocks.map((tb) => {
+                const isSel = selectedPdfElementId === tb.id;
+                return (
+                  <button
+                    key={tb.id}
+                    type="button"
+                    style={{
+                      left: `${Math.max(0, tb.nx * cssW - 2)}px`,
+                      top: `${Math.max(0, tb.ny * cssH - 1)}px`,
+                      width: `${Math.max(20, tb.nw * cssW + 4)}px`,
+                      height: `${Math.max(14, tb.nh * cssH + 2)}px`,
+                    }}
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      onSelectPdfElement?.(tb);
+                    }}
+                    title={`Nhấn để sửa dòng chữ: "${tb.text.slice(0, 60)}"`}
+                    className={`pointer-events-auto absolute rounded-[2px] transition-colors cursor-pointer ${
+                      isSel
+                        ? 'border-2 border-[#087F70] bg-teal-300/20 ring-2 ring-teal-300/60'
+                        : 'border border-transparent hover:border-dashed hover:border-[#087F70] hover:bg-teal-200/15'
+                    }`}
+                  />
+                );
+              })}
+            </div>
+          )}
 
         {/* Direct Student Plain-PDF Annotations Layer (Check, Text, Number, Callout + Selected Line/Pen Delete Badge) */}
         <div className={`absolute inset-0 pointer-events-none ${isDrawingDirect ? '' : ''}`}>
@@ -800,8 +934,16 @@ export const InteractivePdfCanvas: React.FC<InteractivePdfCanvasProps> = ({
   onSelectQuestion,
   onPlaceAtPoint,
   onUpdateRegion,
+  onUpdateQuestion,
   onDeleteQuestion,
   onChangeAnswer,
+  directEditMode = false,
+  directEditSubMode = 'interactive',
+  editablePages,
+  selectedPdfElement,
+  onSelectPdfElement,
+  placingImageActive = false,
+  onClickPageToAddImage,
 }) => {
   const [zoom, setZoom] = useState(1.15);
   const [handle, setHandle] = useState<LoadedPdfHandle | null>(null);
@@ -917,7 +1059,11 @@ export const InteractivePdfCanvas: React.FC<InteractivePdfCanvasProps> = ({
       {/* Canvas Zoom & Placement Banner */}
       <div className="px-4 py-2.5 bg-white border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap shrink-0">
         <div className="flex items-center gap-2.5 text-[16px] font-medium text-slate-800 flex-wrap">
-          {placingTypeLabel ? (
+          {placingImageActive ? (
+            <div className="flex items-center gap-2.5 flex-wrap px-3.5 py-2 rounded-xl bg-amber-50 border-2 border-amber-500 text-amber-950 font-semibold">
+              <span>Nhấn vào vị trí bất kỳ trên trang PDF để chèn hình ảnh đã chọn.</span>
+            </div>
+          ) : placingTypeLabel ? (
             <div className="flex items-center gap-2.5 flex-wrap px-3.5 py-2 rounded-xl bg-teal-50 border-2 border-[#087F70] text-[#164E63] font-semibold">
               <span>
                 Nhấn vào vị trí cần trả lời trên trang PDF để thêm: <strong>{placingTypeLabel}</strong>
@@ -933,6 +1079,12 @@ export const InteractivePdfCanvas: React.FC<InteractivePdfCanvasProps> = ({
                 </button>
               )}
             </div>
+          ) : mode === 'author' && directEditMode ? (
+            <span className="text-[#087F70] font-bold">
+              {directEditSubMode === 'content'
+                ? 'Đang sửa nội dung PDF: Nhấn trực tiếp vào dòng chữ, ô bảng hoặc hình ảnh trên trang để sửa.'
+                : 'Đang sửa cách trả lời: Kéo trực tiếp ô chọn, điểm nối, ô điền hoặc khung trả lời trên trang PDF.'}
+            </span>
           ) : pageDims.length > 0 ? (
             mode === 'author' && questions.length === 0 ? (
               <span className="text-slate-700 font-semibold">
@@ -1154,9 +1306,17 @@ export const InteractivePdfCanvas: React.FC<InteractivePdfCanvasProps> = ({
                 onSelectQuestion={onSelectQuestion}
                 onPlaceAtPoint={onPlaceAtPoint}
                 onUpdateRegion={onUpdateRegion}
+                onUpdateQuestion={onUpdateQuestion}
                 onDeleteQuestion={onDeleteQuestion}
                 onChangeAnswer={onChangeAnswer}
                 onOpenAnswerDrawer={(qId) => setActiveDrawerQuestionId(qId)}
+                directEditMode={directEditMode}
+                directEditSubMode={directEditSubMode}
+                pageEditable={editablePages?.find((p) => p.pageIndex === dim.pageIndex)}
+                selectedPdfElementId={selectedPdfElement?.id || null}
+                onSelectPdfElement={onSelectPdfElement}
+                placingImageActive={placingImageActive}
+                onClickPageToAddImage={onClickPageToAddImage}
               />
             ))}
           </div>

@@ -383,7 +383,7 @@ function mergeLeftNumberBadges(lines: TextLineBlock[], pageWidth: number): TextL
       isShortQuestionBadge &&
       next &&
       next.x > cur.x + Math.min(cur.width, 10) &&
-      Math.abs((cur.y + cur.height / 2) - (next.y + next.height / 2)) <= Math.max(13, cur.height * 0.85)
+      Math.abs((cur.y + cur.height / 2) - (next.y + next.height / 2)) <= Math.max(20, cur.height * 1.15)
     ) {
       const combinedItems = [...cur.items, ...next.items].sort((a, b) => a.x - b.x);
       const minX = Math.min(cur.x, next.x);
@@ -581,52 +581,92 @@ interface ClassificationOutput {
   contentBottomY: number;
 }
 
+/**
+ * Matches explicit Vietnamese/English task-directive sentences that may appear
+ * on a separate line AFTER a multi-line scenario or illustration caption inside a question
+ * (e.g. "Hãy đánh dấu ✓ vào ô trống trước đáp án đúng.", "Em hãy nối...", "Điền vào chỗ trống...").
+ */
+const EXPLICIT_DIRECTIVE_LINE_RE =
+  /(?:^|\b)(?:hay\s+(?:danh\s+dau|tich|chon|khoanh|noi|dien|viet|sap\s+xep|to\s+mau|ke|neu|giai\s+thich|trinh\s+bay)|em\s+hay\s+(?:danh\s+dau|tich|chon|khoanh|noi|dien|viet|sap\s+xep|to\s+mau|ke|neu|giai\s+thich|trinh\s+bay)|danh\s+dau.{0,30}(?:o\s+trong|o\s+vuong|dap\s+an|phuong\s+an|cau\s+tra\s+loi|y\s+dung)|tich\s+vao\s+o|khoanh\s+(?:tron|vao)|chon\s+(?:dap\s+an|phuong\s+an|cau\s+tra\s+loi|y\s+dung)|noi\s+(?:cot|moi|cac|thong\s+tin|hinh|y|tu|cap|o)|ghep\s*doi|dien\s+(?:vao|tu|so|dung|sai)|sap\s+xep.{0,25}thu\s+tu|chu\s+thich.{0,25}(?:hinh|so\s+do)|ve\s+(?:hinh|do\s+thi|so\s+do|duong\s+noi)|choose\s+the\s+correct|match\s+the|fill\s+in\s+the\s+blank)/i;
+
 function findStemEndIndex(lines: TextLineBlock[], clusterCheckboxes: PdfGeomBox[] = []): number {
   if (lines.length <= 1) return 0;
   let endIdx = 0;
-  for (let i = 1; i < lines.length; i++) {
+
+  // Scan ahead to find the last explicit task-directive line BEFORE the first option/checkbox/table row.
+  // This guarantees that scenarios + image captions + a separate directive line such as
+  // "Hãy đánh dấu ✓ vào ô trống trước đáp án đúng." are NEVER truncated away!
+  const firstOptionOrBodyIdx = (() => {
+    for (let i = 1; i < lines.length; i++) {
+      const t = lines[i].text.trim();
+      const tf = foldVietnamese(t);
+      const lineMidY = lines[i].y + lines[i].height / 2;
+      const hasAlignedCheckbox = clusterCheckboxes.some(
+        (cb) => Math.abs(cb.y + cb.height / 2 - lineMidY) <= Math.max(10, lines[i].height * 0.75)
+      );
+      if (hasAlignedCheckbox) return i;
+      if (
+        /^(?:[A-D][\.\)]|\d+[\)\.]|[a-d][\)\.]|[☐□▢◯○]|\[ ?\]|\( ?\)|cot\s*[ab12]|stt\b|noi\s+dung\b|phat\s+bieu\b|thong\s+tin\b|quyet\s+dinh\b)/i.test(
+          tf
+        ) ||
+        /^(?:[A-D][\.\)]|\d+[\)\.]|[a-d][\)\.]|[☐□▢◯○]|\[ ?\]|\( ?\))/.test(t) ||
+        BLANK_WRITING_LINE_RE.test(t) ||
+        (/(?:^|[\s/|(\[])(?:dung|d)(?=$|[\s/|)\]])/i.test(tf) &&
+          /(?:^|[\s/|(\[])(?:sai|s)(?=$|[\s/|)\]])/i.test(tf) &&
+          t.length < 56)
+      ) {
+        return i;
+      }
+      if (lines[i].items.length >= 2) {
+        let maxGap = 0;
+        for (let k = 1; k < lines[i].items.length; k++) {
+          const prev = lines[i].items[k - 1];
+          const gap = lines[i].items[k].x - (prev.x + prev.width);
+          if (gap > maxGap) maxGap = gap;
+        }
+        if (maxGap > 58) return i;
+      }
+    }
+    return lines.length;
+  })();
+
+  let lastDirectiveBeforeOptions = -1;
+  for (let i = 1; i < Math.min(firstOptionOrBodyIdx, 14); i++) {
+    if (EXPLICIT_DIRECTIVE_LINE_RE.test(foldVietnamese(lines[i].text.trim()))) {
+      lastDirectiveBeforeOptions = i;
+    }
+  }
+
+  for (let i = 1; i < Math.min(firstOptionOrBodyIdx, 14); i++) {
     const t = lines[i].text.trim();
     const tf = foldVietnamese(t);
     const prevText = lines[i - 1].text.trim();
-    // Stop stem before a line aligned with a vector checkbox (option row!)
-    const lineMidY = lines[i].y + lines[i].height / 2;
-    const hasAlignedCheckbox = clusterCheckboxes.some(
-      (cb) => Math.abs(cb.y + cb.height / 2 - lineMidY) <= Math.max(10, lines[i].height * 0.75)
-    );
-    if (hasAlignedCheckbox) {
+    const isDirectiveLine = EXPLICIT_DIRECTIVE_LINE_RE.test(tf);
+
+    // If previous line ended with ':' and we have already passed any directive line, stop stem here
+    if (prevText.endsWith(':') && lines.length >= 3 && i > lastDirectiveBeforeOptions && !isDirectiveLine) {
       break;
     }
-    // If previous line ended with ':' and there are multiple body lines below, stem has ended
-    if (prevText.endsWith(':') && lines.length >= 3) {
+
+    // Allow larger vertical gaps when an illustration separates scenario text from the directive sentence
+    const vGap = lines[i].y - (lines[i - 1].y + lines[i - 1].height);
+    if (vGap > 24 && i > lastDirectiveBeforeOptions && !isDirectiveLine) {
       break;
     }
-    // Stop stem before options, sub-items, checkboxes, tables, or blank lines
+
+    endIdx = i;
+    // Once we pass the explicit directive line and hit a sentence end (not followed by another wrapped directive line), stop cleanly
     if (
-      /^(?:[A-D][\.\)]|\d+[\)\.]|[a-d][\)\.]|[☐□▢◯○]|\[ ?\]|\( ?\)|cot\s*[ab12]|stt\b|noi\s+dung\b|phat\s+bieu\b|thong\s+tin\b|quyet\s+dinh\b)/i.test(
-        tf
-      ) ||
-      /^(?:[A-D][\.\)]|\d+[\)\.]|[a-d][\)\.]|[☐□▢◯○]|\[ ?\]|\( ?\))/.test(t) ||
-      BLANK_WRITING_LINE_RE.test(t) ||
-      (/(?:^|[\s/|(\[])(?:dung|d)(?=$|[\s/|)\]])/i.test(tf) &&
-        /(?:^|[\s/|(\[])(?:sai|s)(?=$|[\s/|)\]])/i.test(tf) &&
-        t.length < 56)
+      lastDirectiveBeforeOptions >= 0 &&
+      i >= lastDirectiveBeforeOptions &&
+      /[.?:!]$/.test(t) &&
+      (i + 1 >= firstOptionOrBodyIdx ||
+        lines[i + 1].y - (lines[i].y + lines[i].height) > 10 ||
+        !EXPLICIT_DIRECTIVE_LINE_RE.test(foldVietnamese(lines[i + 1].text.trim())))
     ) {
       break;
     }
-    // Check if this line splits into 2 wide columns (matching/table body)
-    if (lines[i].items.length >= 2) {
-      let maxGap = 0;
-      for (let k = 1; k < lines[i].items.length; k++) {
-        const prev = lines[i].items[k - 1];
-        const gap = lines[i].items[k].x - (prev.x + prev.width);
-        if (gap > maxGap) maxGap = gap;
-      }
-      if (maxGap > 58) break;
-    }
-    // Only include wrapped stem lines right below previous stem line
-    if (lines[i].y - (lines[i - 1].y + lines[i - 1].height) > 22) break;
-    endIdx = i;
-    if (endIdx >= 3) break;
+    if (endIdx >= 8 && i > lastDirectiveBeforeOptions) break;
   }
   return endIdx;
 }
@@ -985,47 +1025,79 @@ function extractMcqOptionsWithAnchors(
     return cbOptions.slice(0, 6);
   }
 
-  // Pattern C: REAL PDF VECTOR CHECKBOXES (extracted via PDF.js getOperatorList!)
-  // Pairs each drawn square with its adjacent option text line — even when PDF has NO "A./B./C." or "☐" text!
+  // Pattern C: REAL PDF VECTOR / SMALL-IMAGE CHECKBOXES (extracted via PDF.js getOperatorList!)
+  // Pairs each drawn square with its adjacent option text line (right, left, or above/below for picture grids)
+  // even when PDF has NO "A./B./C." or "☐" text!
   if (clusterCheckboxes.length >= 2 && clusterCheckboxes.length <= 8) {
     // Check if checkboxes are NOT a 2-column Đúng/Sai table on the right side
     const rightSideCbs = clusterCheckboxes.filter((cb) => cb.x > pageWidth * 0.62);
     const isLikelyTfRightTable = rightSideCbs.length >= 4 && rightSideCbs.length === clusterCheckboxes.length;
     if (!isLikelyTfRightTable) {
       const sortedCbs = [...clusterCheckboxes].sort((a, b) =>
-        Math.abs(a.y - b.y) > 10 ? a.y - b.y : a.x - b.x
+        Math.abs(a.y - b.y) > 12 ? a.y - b.y : a.x - b.x
       );
+      // Are checkboxes laid out horizontally on the same row (e.g., 3 picture cards side-by-side)?
+      const ySpread = Math.max(...sortedCbs.map((c) => c.y)) - Math.min(...sortedCbs.map((c) => c.y));
+      const isHorizontalRow = sortedCbs.length >= 2 && ySpread <= 18;
       const vecOpts: Array<{ id: string; label: string; text: string; anchor?: PdfPointAnchor }> = [];
       for (let i = 0; i < sortedCbs.length; i++) {
         const cb = sortedCbs[i];
+        const cbMidX = cb.x + cb.width / 2;
         const cbMidY = cb.y + cb.height / 2;
         const cbRight = cb.x + cb.width;
-        // Find option text directly to the right of this checkbox (or right below it)
-        const matchingLine = bodyLines.find(
-          (ln) =>
-            Math.abs((ln.y + ln.height / 2) - cbMidY) <= 14 &&
-            ln.items.some((it) => it.x >= cbRight - 6)
-        );
+        const nextCbX = isHorizontalRow && sortedCbs[i + 1] ? sortedCbs[i + 1].x - 4 : cbRight + pageWidth * 0.68;
+
+        // 1) Option text directly to the right of this checkbox
         let optText = '';
-        if (matchingLine) {
-          const rightItems = matchingLine.items.filter(
-            (it) => it.x >= cbRight - 6 && it.x < cbRight + pageWidth * 0.55
+        const matchingRightLine = bodyLines.find(
+          (ln) =>
+            Math.abs((ln.y + ln.height / 2) - cbMidY) <= 18 &&
+            ln.items.some((it) => it.x >= cbRight - 6 && it.x < nextCbX)
+        );
+        if (matchingRightLine) {
+          const rightItems = matchingRightLine.items.filter(
+            (it) => it.x >= cbRight - 6 && it.x < nextCbX
           );
           optText = joinLineItemsWithGap(rightItems).replace(/^[A-D][\.\)]\s*/, '').trim();
+        } else {
+          // 2) Option text directly to the left of this checkbox (checkbox on right side of option)
+          const matchingLeftLine = bodyLines.find(
+            (ln) =>
+              Math.abs((ln.y + ln.height / 2) - cbMidY) <= 18 &&
+              ln.items.some((it) => it.x + it.width <= cb.x + 8)
+          );
+          if (matchingLeftLine) {
+            const leftItems = matchingLeftLine.items.filter((it) => it.x + it.width <= cb.x + 8);
+            optText = joinLineItemsWithGap(leftItems).replace(/^[A-D][\.\)]\s*/, '').trim();
+          } else if (isHorizontalRow) {
+            // 3) Caption right above or below a horizontal checkbox card
+            const nearCaption = bodyLines.find(
+              (ln) =>
+                Math.abs((ln.y + ln.height / 2) - cbMidY) <= 44 &&
+                ln.items.some((it) => Math.abs((it.x + it.width / 2) - cbMidX) <= 80)
+            );
+            if (nearCaption) {
+              const nearItems = nearCaption.items.filter(
+                (it) => Math.abs((it.x + it.width / 2) - cbMidX) <= 80
+              );
+              optText = joinLineItemsWithGap(nearItems).replace(/^[A-D][\.\)]\s*/, '').trim();
+            }
+          }
         }
+
         const letter = String.fromCharCode(65 + i);
         vecOpts.push({
           id: letter,
           label: letter,
           text: optText || `Phương án ${letter}`,
           anchor: {
-            nx: clampNorm((cb.x + cb.width / 2) / pageWidth, 0.02, 0.96),
+            nx: clampNorm(cbMidX / pageWidth, 0.02, 0.96),
             ny: clampNorm(cbMidY / pageHeight),
           },
         });
       }
       if (vecOpts.length >= 2) {
-        return vecOpts.slice(0, 6);
+        return vecOpts.slice(0, 8);
       }
     }
   }
@@ -1033,46 +1105,55 @@ function extractMcqOptionsWithAnchors(
   // Pattern D: Prompt explicitly asks to select/tick/circle an option AND clean body lines exist
   // (handles PDFs where empty squares were rasterized into a background image)
   const foldedAll = foldVietnamese(cluster.fullText);
+  const isFillDominant =
+    /\bdien\s+(?:.{0,32}\s+)?vao\s+(?:cho|bang|o\s+trong)|\bhoan\s+thanh\s+(?:bang|cau|doan)/i.test(foldedAll) &&
+    !/(danh\s+dau|tich\s+vao|khoanh\s+(?:tron|vao)|chon\s+(?:dap\s+an|phuong\s+an|y\s+dung))/i.test(foldedAll);
   if (
-    /(o\s+trong|o\s+vuong|danh\s+dau|tich\s+vao|khoanh\s+(?:tron|vao)|chon\s+(?:dap\s+an|phuong\s+an|cau\s+tra\s+loi|y\s+dung|chu\s+cai)|to\s+mau\s+vao\s+o)/i.test(
+    !isFillDominant &&
+    /(\bo\s+trong\s+truoc|\bo\s+vuong\b|danh\s+dau|tich\s+vao|khoanh\s+(?:tron|vao)|chon\s+(?:dap\s+an|phuong\s+an|cau\s+tra\s+loi|y\s+dung|chu\s+cai)|to\s+mau\s+vao\s+o)/i.test(
       foldedAll
     ) &&
     bodyLines.length >= 2
   ) {
     const cleanRows = bodyLines.filter(
-      (l) => l.text.trim().length >= 2 && !BLANK_WRITING_LINE_RE.test(l.text)
+      (l) =>
+        l.text.trim().length >= 2 &&
+        !BLANK_WRITING_LINE_RE.test(l.text) &&
+        !EXPLICIT_DIRECTIVE_LINE_RE.test(foldVietnamese(l.text))
     );
-    // Merge wrapped lines if a row is indented further right than the typical option start X
-    const minBodyX = Math.min(...cleanRows.map((r) => r.x));
-    const mergedOptionRows: TextLineBlock[] = [];
-    for (const row of cleanRows) {
-      const prev = mergedOptionRows[mergedOptionRows.length - 1];
-      const isContinuation =
-        prev &&
-        row.y - (prev.y + prev.height) <= 12 &&
-        row.x > minBodyX + 12 &&
-        !/^[•\-–—A-Da-d1-6][\.\)\s]/.test(row.text);
-      if (isContinuation) {
-        prev.text = `${prev.text} ${row.text}`.trim();
-        prev.height = row.y + row.height - prev.y;
-      } else {
-        mergedOptionRows.push({ ...row });
+    if (cleanRows.length >= 2) {
+      // Merge wrapped lines if a row is indented further right than the typical option start X
+      const minBodyX = Math.min(...cleanRows.map((r) => r.x));
+      const mergedOptionRows: TextLineBlock[] = [];
+      for (const row of cleanRows) {
+        const prev = mergedOptionRows[mergedOptionRows.length - 1];
+        const isContinuation =
+          prev &&
+          row.y - (prev.y + prev.height) <= 12 &&
+          row.x > minBodyX + 12 &&
+          !/^[•\-–—A-Da-d1-6][\.\)\s]/.test(row.text);
+        if (isContinuation) {
+          prev.text = `${prev.text} ${row.text}`.trim();
+          prev.height = row.y + row.height - prev.y;
+        } else {
+          mergedOptionRows.push({ ...row });
+        }
       }
-    }
-    if (mergedOptionRows.length >= 2 && mergedOptionRows.length <= 6) {
-      return mergedOptionRows.map((ln, idx) => {
-        const letter = String.fromCharCode(65 + idx);
-        const anchorX = Math.max(16, ln.x - 18);
-        return {
-          id: letter,
-          label: letter,
-          text: ln.text.replace(/^[•\-–—]\s*/, '').trim(),
-          anchor: {
-            nx: clampNorm(anchorX / pageWidth, 0.02, 0.95),
-            ny: clampNorm((ln.y + ln.height / 2) / pageHeight),
-          },
-        };
-      });
+      if (mergedOptionRows.length >= 2 && mergedOptionRows.length <= 6) {
+        return mergedOptionRows.map((ln, idx) => {
+          const letter = String.fromCharCode(65 + idx);
+          const anchorX = Math.max(16, ln.x - 18);
+          return {
+            id: letter,
+            label: letter,
+            text: ln.text.replace(/^[•\-–—]\s*/, '').trim(),
+            anchor: {
+              nx: clampNorm(anchorX / pageWidth, 0.02, 0.95),
+              ny: clampNorm((ln.y + ln.height / 2) / pageHeight),
+            },
+          };
+        });
+      }
     }
   }
 
@@ -1402,7 +1483,7 @@ function classifyQuestionCluster(
     clusterCheckboxes
   );
   const isMcqPrompt =
-    /(danh\s+dau.{0,28}(?:o\s+trong|o\s+vuong|dap\s+an|cau\s+tra\s+loi|phuong\s+an|chu\s+cai)|danh\s+dau\s*(?:[✓✔×x✗]|tich|\(\s*[✓✔x]\s*\))|tich\s+vao\s+o|to\s+mau\s+vao\s+o|khoanh\s+(?:tron|vao\s+chu|vao\s+dap\s+an)|chon\s+(?:dap\s+an|phuong\s+an|cau\s+tra\s+loi|y|chu\s+cai)|em\s+hay\s+chon|hay\s+chon|trac\s+nghiem)/i.test(
+    /(danh\s+dau.{0,36}(?:\bo\s+trong|\bo\s+vuong|dap\s+an|cau\s+tra\s+loi|phuong\s+an|chu\s+cai|y\s+dung|truoc)|danh\s+dau\s*(?:[✓✔×x✗v]|tich|\(\s*[✓✔x]\s*\))|tich\s+vao\s+o|to\s+mau\s+vao\s+o|vao\s+\bo\s+trong\s+truoc|\bo\s+trong\s+truoc\s+(?:dap\s+an|cau\s+tra\s+loi|phuong\s+an|y)|khoanh\s+(?:tron|vao\s+chu|vao\s+dap\s+an)|chon\s+(?:dap\s+an|phuong\s+an|cau\s+tra\s+loi|y|chu\s+cai)|em\s+hay\s+chon|hay\s+chon|trac\s+nghiem)/i.test(
       folded
     );
   const isExplicitMultiChoice =
@@ -1459,7 +1540,7 @@ function classifyQuestionCluster(
   }
 
   const isFillPrompt =
-    /(dien\s+vao\s+cho|dien\s+tu|dien\s+cum\s+tu|dien\s+so|dien\s+he\s+so|dien\s+khuyet|dien\s+thong\s+tin|dien\s+noi\s+dung|dien\s+tiep|viet\s+vao\s+cho\s+cham|hoan\s+thanh\s+(?:cau|doan|bang)|fill\s+in\s+the\s+blank)/i.test(
+    /(dien\s+(?:.{0,36}\s+)?vao\s+cho|dien\s+tu|dien\s+cum\s+tu|dien\s+so|dien\s+he\s+so|dien\s+khuyet|dien\s+thong\s+tin|dien\s+noi\s+dung|dien\s+tiep|viet\s+vao\s+cho\s+cham|hoan\s+thanh\s+(?:cau|doan|bang)|fill\s+in\s+the\s+blank)/i.test(
       folded
     );
 
@@ -1795,10 +1876,19 @@ export function analyzeExtractedPagesForQuestions(pages: ExtractedPageInput[]): 
   for (const pageData of pages) {
     const { pageIndex, sourcePdfPageNumber, printedPageLabel, width: pw, height: ph, textItemCount, lines } =
       pageData;
-    const isLikelyScan = textItemCount < 6;
+    const totalTextChars = lines.reduce((sum, l) => sum + l.text.trim().length, 0);
+    const isLikelyScan = textItemCount < 6 && totalTextChars < 30;
     const medianFont = computeMedianFontSize(lines);
 
-    const contentLines = lines.filter((ln) => ln.y >= ph * 0.045 && ln.y <= ph * 0.945);
+    const contentLines = lines.filter((ln) => {
+      const t = ln.text.trim();
+      const isPageNumFooterOrHeader =
+        (ln.y < ph * 0.06 || ln.y > ph * 0.935) &&
+        /^(?:trang\s+|page\s+|[-–—]\s*)?\d{1,3}(?:\s*[-–—])?$/i.test(t);
+      if (isPageNumFooterOrHeader) return false;
+      if (ln.y < ph * 0.02 || ln.y > ph * 0.975) return false;
+      return true;
+    });
     const pageHasExplicitCau = contentLines.some((ln) => EXPLICIT_MAIN_QUESTION_RE.test(ln.text.trim()));
 
     // Detect lesson heading (including "Bài 1" + following ALL-CAPS subtitle like "THÔNG TIN VÀ QUYẾT ĐỊNH")
@@ -1844,7 +1934,9 @@ export function analyzeExtractedPagesForQuestions(pages: ExtractedPageInput[]): 
     }
 
     // Partition lines into main question clusters (NEVER splitting 1), 2), 3) sub-items or headings!)
+    // Also collect leading orphan lines before the first question on this page (for cross-page continuation)
     const clusters: QuestionCluster[] = [];
+    const leadingOrphanLines: TextLineBlock[] = [];
     let lastBareNum = 0;
     for (let li = 0; li < contentLines.length; li++) {
       const ln = contentLines[li];
@@ -1861,12 +1953,7 @@ export function analyzeExtractedPagesForQuestions(pages: ExtractedPageInput[]): 
         baiMatch &&
         isBaiLineALessonHeading(ln, contentLines[li + 1], pageHasExplicitCau, medianFont, ph);
 
-      // Bare "1.", "2.", "3."... main question support for workbooks without "Câu N" prefix:
-      // - NO explicit "Câu N" exists on the page,
-      // - Starts near left margin (x < pw * 0.24),
-      // - Monotonically increasing question number (1, 2, 3...) — NOT sub-items like "1)", "2)"!
-      // - Has an instruction/exercise verb, question mark, OR full sentence (>= 22 chars)
-      // - NOT inside an active matching/TF body where 1., 2. are short sub-items
+      // Bare "1.", "2.", "3."... main question support for workbooks without "Câu N" prefix
       let bareNumMatch: RegExpMatchArray | null = null;
       if (!explicitMatch && !baiMatch && !pageHasExplicitCau && ln.x < pw * 0.24) {
         const m = trimmed.match(/^(\d{1,2})\.\s+(.{10,})$/);
@@ -1916,6 +2003,84 @@ export function analyzeExtractedPagesForQuestions(pages: ExtractedPageInput[]): 
         cur.lines.push(ln);
         cur.endY = Math.max(cur.endY, ln.y + ln.height);
         cur.fullText = `${cur.fullText}\n${trimmed}`;
+      } else {
+        // Lines appearing at the very top of a page before its first Câu N (may be continuation of previous page's last question!)
+        leadingOrphanLines.push(ln);
+      }
+    }
+
+    // If the PREVIOUS page ended with an unclassified question AND this page starts with leading orphan lines
+    // (for example, a question whose scenario started at the bottom of page P and its directive/options continued on page P+1),
+    // re-evaluate that previous question with the continuation text so its instruction is never lost!
+    if (leadingOrphanLines.length > 0 && rawQuestions.length > 0) {
+      const prevQ = rawQuestions[rawQuestions.length - 1];
+      if (prevQ.region.pageIndex === pageIndex - 1 && prevQ.classificationStatus === 'unclassified') {
+        const contText = leadingOrphanLines.map((l) => l.text.trim()).join('\n');
+        const firstNextY = clusters[0]?.startY ?? ph - 32;
+        const contCluster: QuestionCluster = {
+          code: prevQ.code,
+          normalizedCode: normalizeQuestionCode(prevQ.code),
+          startY: leadingOrphanLines[0].y,
+          endY: leadingOrphanLines[leadingOrphanLines.length - 1].y + leadingOrphanLines[leadingOrphanLines.length - 1].height,
+          lines: leadingOrphanLines,
+          fullText: `${prevQ.prompt}\n${contText}`,
+          subItems: [],
+        };
+        const contCls = classifyQuestionCluster(contCluster, pw, ph, firstNextY, pageData.geometry);
+        if (contCls.classificationStatus === 'classified') {
+          const contCbs = (pageData.geometry?.checkboxes || []).filter(
+            (b) => b.y + b.height / 2 >= Math.max(0, contCluster.startY - 6) && b.y + b.height / 2 <= Math.min(ph, firstNextY - 2)
+          );
+          const contStemEnd = findStemEndIndex(contCluster.lines, contCbs);
+          const contStemText = contCluster.lines
+            .slice(0, contStemEnd + 1)
+            .map((l) => l.text.trim())
+            .filter((t) => t.length > 0 && !BLANK_WRITING_LINE_RE.test(t))
+            .join(' ');
+          if (contStemText && !prevQ.prompt.includes(contStemText)) {
+            prevQ.prompt = `${prevQ.prompt} ${contStemText}`.trim();
+          }
+          prevQ.type = contCls.type;
+          prevQ.classificationStatus = 'classified';
+          prevQ.unclassifiedReason = undefined;
+          prevQ.suggestedTypes = undefined;
+          prevQ.required = true;
+          prevQ.needsReview = contCls.needsReview;
+          prevQ.overlayMode = contCls.overlayMode;
+          prevQ.detectionNote = `${contCls.detectionNote} (Tiếp nối nội dung từ trang trước sang trang ${sourcePdfPageNumber}.)`;
+          // Place interactive anchors/region on the continuation page where the options/blanks actually sit!
+          if (contCls.overlayMode === 'anchored') {
+            prevQ.region = {
+              pageIndex,
+              x: 18,
+              y: Math.max(16, Math.round(contCluster.startY - 4)),
+              width: Math.round(pw - 36),
+              height: Math.max(54, Math.round(contCluster.endY - contCluster.startY + 14)),
+              nx: clampNorm(18 / pw),
+              ny: clampNorm(Math.max(16, contCluster.startY - 4) / ph),
+              nw: clampNorm((pw - 36) / pw),
+              nh: clampNorm(Math.max(54, contCluster.endY - contCluster.startY + 14) / ph),
+            };
+          }
+          if (contCls.type === 'mcq' || contCls.type === 'mcq_multi') {
+            prevQ.mcqOptions = contCls.extractedOptions;
+          } else if (contCls.type === 'tf') {
+            prevQ.tfStatements = contCls.extractedTfStatements;
+          } else if (contCls.type === 'matching' && contCls.extractedMatching) {
+            prevQ.matching = {
+              mode: contCls.matchingMode || 'line',
+              allowManyToOne: false,
+              shuffleB: false,
+              practiceFeedback: false,
+              columnATitle: 'Cột trái',
+              columnBTitle: 'Cột phải',
+              itemsA: contCls.extractedMatching.itemsA,
+              itemsB: contCls.extractedMatching.itemsB,
+            };
+          } else if (contCls.type === 'fill_blank') {
+            prevQ.fillBlanks = contCls.extractedFillBlanks;
+          }
+        }
       }
     }
 
@@ -2016,7 +2181,18 @@ export function analyzeExtractedPagesForQuestions(pages: ExtractedPageInput[]): 
       }
 
       const qId = `det-p${pageIndex + 1}-q${idx + 1}-${Math.random().toString(36).slice(2, 6)}`;
-      const firstLineClean = cl.lines[0].text
+      // Read the ENTIRE stem (including scenario + instruction line such as "Hãy đánh dấu ✓ vào ô trống..."),
+      // NEVER truncating to just the first line after "Câu 1"!
+      const clusterCbsForStem = (pageData.geometry?.checkboxes || []).filter(
+        (b) => b.y + b.height / 2 >= Math.max(0, cl.startY - 6) && b.y + b.height / 2 <= Math.min(ph, nextClusterStartY - 2)
+      );
+      const stemEnd = findStemEndIndex(cl.lines, clusterCbsForStem);
+      const fullStemRaw = cl.lines
+        .slice(0, stemEnd + 1)
+        .map((l) => l.text.trim())
+        .filter((t) => t.length > 0 && !BLANK_WRITING_LINE_RE.test(t))
+        .join(' ');
+      const fullStemClean = fullStemRaw
         .replace(EXPLICIT_MAIN_QUESTION_RE, '')
         .replace(BAI_NUMBER_RE, '')
         .replace(/^\d{1,2}\.\s+/, '')
@@ -2026,8 +2202,8 @@ export function analyzeExtractedPagesForQuestions(pages: ExtractedPageInput[]): 
       const question: InteractiveQuestion = {
         id: qId,
         code: cl.code || `Câu ${rawQuestions.length + 1}`,
-        title: firstLineClean.slice(0, 84) || meta.label,
-        prompt: firstLineClean || `Hoàn thành ${cl.code} theo đề bài trên trang PDF.`,
+        title: fullStemClean.slice(0, 88) || meta.label,
+        prompt: fullStemClean || `Hoàn thành ${cl.code} theo đề bài trên trang PDF.`,
         type: cls.type,
         maxPoints: 2,
         required: cls.classificationStatus === 'classified',
@@ -2262,9 +2438,9 @@ function classifyVectorRect(
     geom.verticalLines.push({ x1: x + w / 2, y1: y, x2: x + w / 2, y2: y + h });
     return;
   }
-  // Vector checkbox square (7..28pt, roughly square)
+  // Vector checkbox square (7..32pt, roughly square — covers primary & high school workbooks)
   const ratio = w / h;
-  if (w >= 7 && w <= 28 && h >= 7 && h <= 28 && ratio >= 0.68 && ratio <= 1.45) {
+  if (w >= 7 && w <= 32 && h >= 7 && h <= 32 && ratio >= 0.65 && ratio <= 1.5) {
     const dup = geom.checkboxes.some(
       (c) => Math.abs(c.x - x) < 5 && Math.abs(c.y - y) < 5
     );
@@ -2272,7 +2448,7 @@ function classifyVectorRect(
     return;
   }
   // Card / Table cell box
-  if (w >= 44 && h >= 16) {
+  if (w >= 36 && h >= 14) {
     const dup = geom.boxes.some(
       (b) => Math.abs(b.x - x) < 6 && Math.abs(b.y - y) < 6 && Math.abs(b.width - w) < 8
     );
@@ -2280,7 +2456,7 @@ function classifyVectorRect(
   }
 }
 
-async function extractPageGeometry(
+export async function extractPageGeometry(
   page: { getOperatorList: () => Promise<{ fnArray: number[]; argsArray: unknown[] }> },
   vp: { transform: number[]; width: number; height: number }
 ): Promise<ExtractedPageGeometry> {
@@ -2316,14 +2492,14 @@ async function extractPageGeometry(
       const p2 = applyMatrixPoint(ctm, bx, by);
       const dx = Math.abs(p2.x - p1.x);
       const dy = Math.abs(p2.y - p1.y);
-      if (dx >= 32 && dy <= 3.5) {
+      if (dx >= 28 && dy <= 3.5) {
         geom.horizontalLines.push({
           x1: Math.min(p1.x, p2.x),
           y1: (p1.y + p2.y) / 2,
           x2: Math.max(p1.x, p2.x),
           y2: (p1.y + p2.y) / 2,
         });
-      } else if (dy >= 24 && dx <= 3.5) {
+      } else if (dy >= 20 && dx <= 3.5) {
         geom.verticalLines.push({
           x1: (p1.x + p2.x) / 2,
           y1: Math.min(p1.y, p2.y),
@@ -2341,14 +2517,99 @@ async function extractPageGeometry(
         stack.push([...ctm]);
       } else if (fn === OPS.restore) {
         ctm = stack.pop() || [...vp.transform];
+      } else if (fn === OPS.paintFormXObjectBegin) {
+        stack.push([...ctm]);
+        if (Array.isArray(args) && Array.isArray(args[0]) && args[0].length >= 6) {
+          ctm = multiplyMatrix2D(ctm, args[0] as number[]);
+        }
+      } else if (fn === OPS.paintFormXObjectEnd) {
+        ctm = stack.pop() || [...vp.transform];
       } else if (fn === OPS.transform && Array.isArray(args) && args.length >= 6) {
         ctm = multiplyMatrix2D(ctm, args as number[]);
       } else if (fn === OPS.rectangle && Array.isArray(args) && args.length >= 4) {
         recordTransformedRect(Number(args[0]), Number(args[1]), Number(args[2]), Number(args[3]));
       } else if (fn === OPS.constructPath && Array.isArray(args) && args.length >= 2) {
-        const ops = args[0] as number[];
-        const coords = args[1] as number[];
-        if (Array.isArray(ops) && Array.isArray(coords)) {
+        // Format A (PDF.js v5/v6 — pdfjs-dist@6.5.x):
+        //   args = [paintOp: number, [data: Float32Array], minMax?: [minX, minY, maxX, maxY]]
+        //   Interleaved DrawOPS inside data:
+        //     0 = moveTo(x, y), 1 = lineTo(x, y), 2 = curveTo(x1,y1,x2,y2,x3,y3),
+        //     3 = quadraticCurveTo(x1,y1,x2,y2), 4 = closePath
+        if (typeof args[0] === 'number' && Array.isArray(args[1]) && args[1][0] && typeof (args[1][0] as ArrayLike<number>).length === 'number') {
+          const data = args[1][0] as ArrayLike<number>;
+          let k = 0;
+          let curX = 0;
+          let curY = 0;
+          let startX = 0;
+          let startY = 0;
+          let pathPts: Array<{ x: number; y: number }> = [];
+
+          const flushSubPath = () => {
+            if (pathPts.length >= 3 && pathPts.length <= 28) {
+              const xs = pathPts.map((p) => p.x);
+              const ys = pathPts.map((p) => p.y);
+              const minX = Math.min(...xs);
+              const maxX = Math.max(...xs);
+              const minY = Math.min(...ys);
+              const maxY = Math.max(...ys);
+              classifyVectorRect(minX, minY, maxX - minX, maxY - minY, vp.width, vp.height, geom);
+            }
+            pathPts = [];
+          };
+
+          while (k < data.length) {
+            const drawOp = data[k++];
+            if (drawOp === 0) {
+              // moveTo
+              flushSubPath();
+              curX = data[k++] || 0;
+              curY = data[k++] || 0;
+              startX = curX;
+              startY = curY;
+              pathPts.push(applyMatrixPoint(ctm, curX, curY));
+            } else if (drawOp === 1) {
+              // lineTo
+              const nx = data[k++] || 0;
+              const ny = data[k++] || 0;
+              recordSegment(curX, curY, nx, ny);
+              curX = nx;
+              curY = ny;
+              pathPts.push(applyMatrixPoint(ctm, curX, curY));
+            } else if (drawOp === 2) {
+              // curveTo (6 coords)
+              const c1x = data[k++] || 0;
+              const c1y = data[k++] || 0;
+              const c2x = data[k++] || 0;
+              const c2y = data[k++] || 0;
+              const nx = data[k++] || 0;
+              const ny = data[k++] || 0;
+              pathPts.push(applyMatrixPoint(ctm, c1x, c1y));
+              pathPts.push(applyMatrixPoint(ctm, c2x, c2y));
+              curX = nx;
+              curY = ny;
+              pathPts.push(applyMatrixPoint(ctm, curX, curY));
+            } else if (drawOp === 3) {
+              // quadraticCurveTo (4 coords)
+              const cx = data[k++] || 0;
+              const cy = data[k++] || 0;
+              const nx = data[k++] || 0;
+              const ny = data[k++] || 0;
+              pathPts.push(applyMatrixPoint(ctm, cx, cy));
+              curX = nx;
+              curY = ny;
+              pathPts.push(applyMatrixPoint(ctm, curX, curY));
+            } else if (drawOp === 4) {
+              // closePath
+              recordSegment(curX, curY, startX, startY);
+              flushSubPath();
+            } else {
+              break;
+            }
+          }
+          flushSubPath();
+        } else if (Array.isArray(args[0]) && Array.isArray(args[1])) {
+          // Format B (Legacy PDF.js v3/v4): args = [ops[], coords[]]
+          const ops = args[0] as number[];
+          const coords = args[1] as number[];
           let ci = 0;
           let curX = 0;
           let curY = 0;
@@ -2357,7 +2618,7 @@ async function extractPageGeometry(
           let pathPts: Array<{ x: number; y: number }> = [];
 
           const flushPathPoly = () => {
-            if (pathPts.length >= 4 && pathPts.length <= 10) {
+            if (pathPts.length >= 4 && pathPts.length <= 28) {
               const xs = pathPts.map((p) => p.x);
               const ys = pathPts.map((p) => p.y);
               const minX = Math.min(...xs);
@@ -2427,7 +2688,14 @@ async function extractPageGeometry(
         const maxY = Math.max(p1.y, p2.y, p3.y, p4.y);
         const w = maxX - minX;
         const h = maxY - minY;
-        if (w >= 26 && h >= 26 && !(w > vp.width * 0.88 && h > vp.height * 0.85)) {
+        const ratio = h > 0 ? w / h : 0;
+        // Small square embedded image (7..28pt) -> very often a checkbox icon exported by Word/InDesign!
+        if (w >= 7 && w <= 28 && h >= 7 && h <= 28 && ratio >= 0.68 && ratio <= 1.45) {
+          const dup = geom.checkboxes.some(
+            (c) => Math.abs(c.x - minX) < 5 && Math.abs(c.y - minY) < 5
+          );
+          if (!dup) geom.checkboxes.push({ x: minX, y: minY, width: w, height: h });
+        } else if (w >= 28 && h >= 24 && !(w > vp.width * 0.88 && h > vp.height * 0.85)) {
           const dup = geom.images.some(
             (im) => Math.abs(im.x - minX) < 8 && Math.abs(im.y - minY) < 8
           );
@@ -2569,8 +2837,9 @@ export async function detectQuestionsFromPdfPages(
       let effectiveTextCount = validItems.length;
       let usedOcr = false;
 
-      // Local OCR fallback when a page is scanned / image-only (< 6 text items) in browser
-      if (effectiveTextCount < 6 && enableOcr && typeof document !== 'undefined') {
+      // Local OCR fallback when a page is genuinely scanned / image-only (< 6 items AND < 30 chars) in browser
+      const totalChars = lines.reduce((sum, l) => sum + l.text.trim().length, 0);
+      if (effectiveTextCount < 6 && totalChars < 30 && enableOcr && typeof document !== 'undefined') {
         try {
           options?.onProgress?.(
             `Trang ${sourcePdfNum} là trang ảnh — đang đọc chữ bằng OCR cục bộ...`
@@ -2672,11 +2941,12 @@ export async function inspectPdfForPageSelection(pdfBytes: Uint8Array): Promise<
           heading = `${heading} — ${nextLn.text.trim()}`;
         }
       }
+      const totalPageChars = lines.reduce((sum, l) => sum + l.text.trim().length, 0);
       pages.push({
         pdfPageNumber: i,
         printedPageLabel,
         heading,
-        isLikelyScan: validItems.length < 6,
+        isLikelyScan: validItems.length < 6 && totalPageChars < 30,
       });
     }
     return { totalPages, pages };

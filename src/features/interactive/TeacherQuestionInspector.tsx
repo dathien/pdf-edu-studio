@@ -8,9 +8,13 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  ExternalLink,
+  FileEdit,
+  KeyRound,
   Maximize2,
   Minimize2,
   Plus,
+  Sliders,
   Trash2,
   X,
 } from 'lucide-react';
@@ -21,11 +25,19 @@ import {
   type MatchingPair,
   type TeacherQuestionKey,
 } from '../../types/interactive';
+import { syncQuestionAndKeyAfterEdit } from './pdfDirectContentEditor';
+
+export type InspectorActionTab = 'interactive' | 'answer' | 'content';
 
 interface TeacherQuestionInspectorProps {
   question: InteractiveQuestion;
   answerKey: TeacherQuestionKey | undefined;
   examMode: 'exam' | 'practice';
+  initialActionTab?: InspectorActionTab;
+  syncWarning?: string | null;
+  onDismissSyncWarning?: () => void;
+  onEnterContentEdit?: () => void;
+  onOpenFullPdfEditor?: () => void;
   onUpdateQuestion: (patch: Partial<InteractiveQuestion>) => void;
   onChangeQuestionType: (nextType: InteractiveQuestionType) => void;
   onUpdateKey: (nextKey: TeacherQuestionKey) => void;
@@ -41,6 +53,11 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
   question,
   answerKey,
   examMode,
+  initialActionTab = 'interactive',
+  syncWarning,
+  onDismissSyncWarning,
+  onEnterContentEdit,
+  onOpenFullPdfEditor,
   onUpdateQuestion,
   onChangeQuestionType,
   onUpdateKey,
@@ -48,10 +65,13 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
   onSaveAndClose,
   onCancel,
 }) => {
+  const [activeAction, setActiveAction] = useState<InspectorActionTab>(initialActionTab);
+  const [localSyncWarning, setLocalSyncWarning] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const key: TeacherQuestionKey = answerKey || { questionId: question.id };
+  const combinedWarning = syncWarning || localSyncWarning;
 
   const patchKey = (patch: Partial<TeacherQuestionKey>) => {
     onUpdateKey({
@@ -59,6 +79,47 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
       questionId: question.id,
       ...patch,
     });
+  };
+
+  const handleDeleteMcqOption = (optId: string) => {
+    const synced = syncQuestionAndKeyAfterEdit(question, answerKey, {
+      kind: 'option-deleted',
+      optionId: optId,
+    });
+    onUpdateQuestion({ mcqOptions: synced.question.mcqOptions, teacherModified: true });
+    if (synced.answerKey) onUpdateKey(synced.answerKey);
+    if (synced.syncWarning) setLocalSyncWarning(synced.syncWarning);
+  };
+
+  const handleEditMcqOptionText = (optId: string, newText: string) => {
+    const synced = syncQuestionAndKeyAfterEdit(question, answerKey, {
+      kind: 'option-text-edited',
+      optionId: optId,
+      newText,
+    });
+    onUpdateQuestion({ mcqOptions: synced.question.mcqOptions, teacherModified: true });
+    if (synced.syncWarning) setLocalSyncWarning(synced.syncWarning);
+  };
+
+  const handleDeleteTfStatement = (stId: string) => {
+    const synced = syncQuestionAndKeyAfterEdit(question, answerKey, {
+      kind: 'tf-statement-deleted',
+      statementId: stId,
+    });
+    onUpdateQuestion({ tfStatements: synced.question.tfStatements, teacherModified: true });
+    if (synced.answerKey) onUpdateKey(synced.answerKey);
+    if (synced.syncWarning) setLocalSyncWarning(synced.syncWarning);
+  };
+
+  const handleDeleteMatchingItem = (side: 'A' | 'B', itemId: string) => {
+    const synced = syncQuestionAndKeyAfterEdit(question, answerKey, {
+      kind: 'matching-item-deleted',
+      side,
+      itemId,
+    });
+    onUpdateQuestion({ matching: synced.question.matching, teacherModified: true });
+    if (synced.answerKey) onUpdateKey(synced.answerKey);
+    if (synced.syncWarning) setLocalSyncWarning(synced.syncWarning);
   };
 
   // Gentle position/size nudges without exposing pixel coordinates to teachers
@@ -86,6 +147,11 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
   };
 
   const handleSave = () => {
+    if (question.classificationStatus === 'unclassified') {
+      // Do NOT silently convert unclassified question without teacher explicitly choosing a type
+      onSaveAndClose?.();
+      return;
+    }
     onUpdateQuestion({
       teacherApproved: true,
       teacherModified: true,
@@ -154,11 +220,183 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
             </span>
           )}
         </div>
+        {/* 4 Clean Primary Actions per Selected Question (no clutter, 16px+ friendly) */}
+        <div className="grid grid-cols-2 gap-1.5 pt-1">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveAction('content');
+              setConfirmDelete(false);
+            }}
+            className={`inline-flex items-center justify-center gap-1.5 min-h-[42px] px-2.5 rounded-xl border text-[14.5px] font-bold cursor-pointer transition-colors ${
+              activeAction === 'content'
+                ? 'bg-[#164E63] border-[#164E63] text-white'
+                : 'bg-white border-slate-300 text-[#164E63] hover:bg-teal-50'
+            }`}
+          >
+            <FileEdit className="w-4 h-4 shrink-0" />
+            <span>Sửa nội dung</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveAction('interactive');
+              setConfirmDelete(false);
+            }}
+            className={`inline-flex items-center justify-center gap-1.5 min-h-[42px] px-2.5 rounded-xl border text-[14.5px] font-bold cursor-pointer transition-colors ${
+              activeAction === 'interactive'
+                ? 'bg-[#087F70] border-[#087F70] text-white'
+                : 'bg-white border-slate-300 text-[#164E63] hover:bg-teal-50'
+            }`}
+          >
+            <Sliders className="w-4 h-4 shrink-0" />
+            <span>Sửa cách trả lời</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveAction('answer');
+              setConfirmDelete(false);
+            }}
+            className={`inline-flex items-center justify-center gap-1.5 min-h-[42px] px-2.5 rounded-xl border text-[14.5px] font-bold cursor-pointer transition-colors ${
+              activeAction === 'answer'
+                ? 'bg-[#087F70] border-[#087F70] text-white'
+                : 'bg-white border-slate-300 text-[#164E63] hover:bg-teal-50'
+            }`}
+          >
+            <KeyRound className="w-4 h-4 shrink-0" />
+            <span>Sửa đáp án</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmDelete((v) => !v)}
+            className={`inline-flex items-center justify-center gap-1.5 min-h-[42px] px-2.5 rounded-xl border text-[14.5px] font-bold cursor-pointer transition-colors ${
+              confirmDelete
+                ? 'bg-red-600 border-red-600 text-white'
+                : 'bg-white border-red-200 text-red-700 hover:bg-red-50'
+            }`}
+          >
+            <Trash2 className="w-4 h-4 shrink-0" />
+            <span>Xóa câu hỏi</span>
+          </button>
+        </div>
+
+        {confirmDelete && (
+          <div className="rounded-xl bg-red-50 border-2 border-red-300 p-3 space-y-2">
+            <div className="text-[15px] font-bold text-red-900">
+              Thầy cô có chắc muốn xóa {question.code} khỏi bài tập không?
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={onDeleteQuestion}
+                className="min-h-[42px] rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-[15px] cursor-pointer"
+              >
+                Đúng, xóa câu này
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                className="min-h-[42px] rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 font-bold text-[15px] cursor-pointer"
+              >
+                Giữ lại
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Main Scrollable Form */}
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
-        {question.classificationStatus === 'unclassified' ? (
+        {/* Sync Warning Banner whenever edited content/options affect the existing answer key */}
+        {combinedWarning && (
+          <div className="rounded-xl bg-amber-50 border-2 border-amber-400 p-3.5 space-y-2 text-[15px] text-amber-950">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-bold">Cần kiểm tra lại đáp án sau khi sửa nội dung</div>
+                  <p className="mt-0.5 leading-relaxed">{combinedWarning}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setLocalSyncWarning(null);
+                  onDismissSyncWarning?.();
+                }}
+                className="text-amber-700 hover:text-amber-950 cursor-pointer shrink-0"
+                title="Đóng nhắc nhở"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ==================== ACTION A: SỬA NỘI DUNG PDF ==================== */}
+        {activeAction === 'content' && (
+          <div className="space-y-4">
+            <div className="rounded-xl bg-[#F4F8F7] border border-teal-200 p-3.5 space-y-2.5 text-[15.5px] text-[#164E63]">
+              <div className="font-bold text-[16.5px]">Sửa nội dung trên trang PDF</div>
+              <p className="text-[15px] text-slate-700 leading-relaxed">
+                Để sửa trực tiếp chữ đề bài, đáp án, ô bảng hoặc thay/thêm hình ảnh ngay trên trang PDF bên phải, thầy cô hãy bật chế độ sửa nội dung PDF:
+              </p>
+              {onEnterContentEdit && (
+                <button
+                  type="button"
+                  onClick={onEnterContentEdit}
+                  className="w-full inline-flex items-center justify-center gap-2 min-h-[48px] px-4 rounded-xl bg-[#087F70] hover:bg-[#06695d] text-white font-bold text-[16px] cursor-pointer shadow-2xs"
+                >
+                  <FileEdit className="w-5 h-5" />
+                  <span>Chọn chữ / ô bảng / hình trên PDF để sửa</span>
+                </button>
+              )}
+              {onOpenFullPdfEditor && (
+                <button
+                  type="button"
+                  onClick={onOpenFullPdfEditor}
+                  className="w-full inline-flex items-center justify-center gap-2 min-h-[44px] px-3.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-[#164E63] font-bold text-[15px] cursor-pointer"
+                >
+                  <ExternalLink className="w-4 h-4 text-[#087F70]" />
+                  <span>Mở trong Trình biên tập PDF đầy đủ</span>
+                </button>
+              )}
+            </div>
+
+            <div className="space-y-3 pt-1">
+              <div className="text-[16px] font-bold text-[#164E63]">
+                Nội dung hiển thị của {question.code}
+              </div>
+              <label className="block space-y-1">
+                <span className="text-[15px] font-semibold text-slate-700">Tên câu hỏi</span>
+                <input
+                  type="text"
+                  value={question.code}
+                  onChange={(e) => onUpdateQuestion({ code: e.target.value })}
+                  className="w-full min-h-[44px] rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-[16px] font-semibold text-[#164E63]"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-[15px] font-semibold text-slate-700">Nội dung câu hỏi / yêu cầu làm bài</span>
+                <textarea
+                  rows={4}
+                  value={question.prompt}
+                  onChange={(e) =>
+                    onUpdateQuestion({
+                      prompt: e.target.value,
+                      title: e.target.value.slice(0, 88) || question.title,
+                    })
+                  }
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-[16px] leading-relaxed"
+                />
+              </label>
+            </div>
+          </div>
+        )}
+
+        {/* ==================== ACTION B & C: SỬA CÁCH TRẢ LỜI / SỬA ĐÁP ÁN ==================== */}
+        {activeAction !== 'content' && question.classificationStatus === 'unclassified' ? (
           <div className="rounded-xl bg-amber-50 border-2 border-amber-400 p-4 space-y-3 text-[16px] text-amber-950 leading-relaxed">
             <div className="flex items-start gap-2.5">
               <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
@@ -193,17 +431,15 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
               </div>
             )}
           </div>
-        ) : (
-          question.detectionNote && (
-            <div className="rounded-xl bg-amber-50 border border-amber-300 px-3.5 py-3 text-[15.5px] text-amber-950 flex items-start gap-2.5 leading-relaxed">
-              <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
-              <span>{question.detectionNote}</span>
-            </div>
-          )
-        )}
+        ) : activeAction !== 'content' && question.detectionNote ? (
+          <div className="rounded-xl bg-teal-50/70 border border-teal-200 px-3.5 py-3 text-[15px] text-[#164E63] flex items-start gap-2.5 leading-relaxed">
+            <AlertCircle className="w-5 h-5 text-[#087F70] shrink-0 mt-0.5" />
+            <span>{question.detectionNote}</span>
+          </div>
+        ) : null}
 
         {/* Attached sub-items (e.g. 1), 2), 3) kept inside the main question!) */}
-        {question.subItems && question.subItems.length > 0 && (
+        {activeAction !== 'content' && question.subItems && question.subItems.length > 0 && (
           <div className="rounded-xl bg-[#F4F8F7] border border-teal-200 px-3.5 py-2.5 space-y-1">
             <div className="text-[14.5px] font-bold text-[#164E63]">
               Các mục con gắn trong {question.code} ({question.subItems.length} mục):
@@ -218,24 +454,38 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
           </div>
         )}
 
-        {/* 1. Loại câu hỏi */}
-        <label className="block space-y-1.5">
-          <span className="block text-[16px] font-bold text-[#164E63]">1. Loại câu hỏi</span>
-          <select
-            value={question.type}
-            onChange={(e) => onChangeQuestionType(e.target.value as InteractiveQuestionType)}
-            className="w-full min-h-[46px] rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-[16px] font-semibold text-[#164E63] focus:border-[#087F70] outline-none"
-          >
-            {ALL_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {QUESTION_TYPE_META[t].label}
-              </option>
-            ))}
-          </select>
-        </label>
+        {/* 1. Loại câu hỏi — NEVER auto-select "Trả lời ngắn" when unclassified! */}
+        {activeAction === 'interactive' && (
+          <label className="block space-y-1.5">
+            <span className="block text-[16px] font-bold text-[#164E63]">
+              Loại câu hỏi (cách học sinh trả lời)
+            </span>
+            <select
+              value={question.classificationStatus === 'unclassified' ? '' : question.type}
+              onChange={(e) => {
+                if (!e.target.value) return;
+                onChangeQuestionType(e.target.value as InteractiveQuestionType);
+              }}
+              className="w-full min-h-[46px] rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-[16px] font-semibold text-[#164E63] focus:border-[#087F70] outline-none"
+            >
+              {question.classificationStatus === 'unclassified' && (
+                <option value="" disabled>
+                  -- Chưa chọn dạng bài (hãy chọn 1 dạng bên dưới) --
+                </option>
+              )}
+              {ALL_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {QUESTION_TYPE_META[t].label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
         {/* Simple non-technical display mode toggle so teachers can keep PDF text completely uncovered */}
-        {(question.type === 'essay' || question.type === 'short') && (
+        {activeAction === 'interactive' &&
+          question.classificationStatus !== 'unclassified' &&
+          (question.type === 'essay' || question.type === 'short') && (
           <div className="space-y-1.5">
             <span className="block text-[15px] font-bold text-[#164E63]">
               Cách hiển thị ô trả lời trên trang PDF
@@ -279,7 +529,9 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
           </div>
         )}
 
-        {hasAnchorsForDirectMode && (
+        {activeAction === 'interactive' &&
+          question.classificationStatus !== 'unclassified' &&
+          hasAnchorsForDirectMode && (
           <div className="space-y-1.5">
             <span className="block text-[15px] font-bold text-[#164E63]">
               Cách tương tác trên trang PDF
@@ -323,22 +575,25 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
           </div>
         )}
 
-        {/* 2. Đáp án đúng */}
+        {/* 2. Đáp án đúng & danh sách phương án (shown in Sửa cách trả lời & Sửa đáp án, hidden when unclassified) */}
+        {activeAction !== 'content' && question.classificationStatus !== 'unclassified' && (
         <div className="space-y-3 pt-1">
-          <div className="text-[16px] font-bold text-[#164E63]">2. Đáp án đúng</div>
+          <div className="text-[16px] font-bold text-[#164E63]">
+            {activeAction === 'answer' ? 'Đáp án đúng' : 'Phương án & đáp án đúng'}
+          </div>
           <p className="text-[14.5px] text-slate-600 -mt-1.5">
-            Đáp án chỉ lưu cho giáo viên chấm bài, không hiển thị cho học sinh.
+            Đáp án chỉ lưu cho giáo viên chấm bài, không hiển thị cho học sinh. Thầy cô có thể kéo trực tiếp ô chọn trên trang PDF để chỉnh vị trí.
           </p>
 
           {/* 1. MCQ Single */}
           {question.type === 'mcq' && (
             <div className="space-y-2.5">
-              {(question.mcqOptions || []).map((opt, idx) => {
+              {(question.mcqOptions || []).map((opt) => {
                 const isSelected = key.mcqCorrectId === opt.id;
                 return (
                   <div
                     key={opt.id}
-                    className={`flex items-center gap-2.5 rounded-xl border p-2.5 ${
+                    className={`flex items-center gap-2 rounded-xl border p-2.5 ${
                       isSelected
                         ? 'border-[#087F70] bg-teal-50/70'
                         : 'border-slate-200 bg-slate-50/60'
@@ -358,29 +613,60 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
                     <input
                       type="text"
                       value={opt.text}
-                      onChange={(e) => {
-                        const next = [...(question.mcqOptions || [])];
-                        next[idx] = { ...opt, text: e.target.value };
-                        onUpdateQuestion({ mcqOptions: next });
-                      }}
+                      onChange={(e) => handleEditMcqOptionText(opt.id, e.target.value)}
                       className="flex-1 min-h-[40px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[16px]"
                       placeholder={`Nội dung đáp án ${opt.label}`}
                     />
+                    {(question.mcqOptions?.length || 0) > 2 && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteMcqOption(opt.id)}
+                        className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 cursor-pointer shrink-0"
+                        title={`Xóa phương án ${opt.label}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 );
               })}
+              <button
+                type="button"
+                onClick={() => {
+                  const opts = question.mcqOptions || [];
+                  const nextLetter = String.fromCharCode(65 + opts.length);
+                  const lastAnc = opts[opts.length - 1]?.anchor;
+                  onUpdateQuestion({
+                    mcqOptions: [
+                      ...opts,
+                      {
+                        id: `${nextLetter}-${Date.now().toString(36).slice(-3)}`,
+                        label: nextLetter,
+                        text: `Phương án ${nextLetter}`,
+                        anchor: lastAnc
+                          ? { nx: lastAnc.nx, ny: Math.min(0.95, Number((lastAnc.ny + 0.04).toFixed(4))) }
+                          : undefined,
+                      },
+                    ],
+                  });
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 min-h-[42px] rounded-xl border border-slate-300 bg-white hover:bg-teal-50 text-[15px] font-semibold text-[#164E63] cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Thêm phương án</span>
+              </button>
             </div>
           )}
 
           {/* 2. MCQ Multi */}
           {question.type === 'mcq_multi' && (
             <div className="space-y-2.5">
-              {(question.mcqOptions || []).map((opt, idx) => {
+              {(question.mcqOptions || []).map((opt) => {
                 const checked = (key.mcqMultiCorrectIds || []).includes(opt.id);
                 return (
                   <div
                     key={opt.id}
-                    className={`flex items-center gap-2.5 rounded-xl border p-2.5 ${
+                    className={`flex items-center gap-2 rounded-xl border p-2.5 ${
                       checked
                         ? 'border-[#087F70] bg-teal-50/70'
                         : 'border-slate-200 bg-slate-50/60'
@@ -404,16 +690,47 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
                     <input
                       type="text"
                       value={opt.text}
-                      onChange={(e) => {
-                        const next = [...(question.mcqOptions || [])];
-                        next[idx] = { ...opt, text: e.target.value };
-                        onUpdateQuestion({ mcqOptions: next });
-                      }}
+                      onChange={(e) => handleEditMcqOptionText(opt.id, e.target.value)}
                       className="flex-1 min-h-[40px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[16px]"
                     />
+                    {(question.mcqOptions?.length || 0) > 2 && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteMcqOption(opt.id)}
+                        className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 cursor-pointer shrink-0"
+                        title={`Xóa phương án ${opt.label}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 );
               })}
+              <button
+                type="button"
+                onClick={() => {
+                  const opts = question.mcqOptions || [];
+                  const nextLetter = String.fromCharCode(65 + opts.length);
+                  const lastAnc = opts[opts.length - 1]?.anchor;
+                  onUpdateQuestion({
+                    mcqOptions: [
+                      ...opts,
+                      {
+                        id: `${nextLetter}-${Date.now().toString(36).slice(-3)}`,
+                        label: nextLetter,
+                        text: `Phương án ${nextLetter}`,
+                        anchor: lastAnc
+                          ? { nx: lastAnc.nx, ny: Math.min(0.95, Number((lastAnc.ny + 0.04).toFixed(4))) }
+                          : undefined,
+                      },
+                    ],
+                  });
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 min-h-[42px] rounded-xl border border-slate-300 bg-white hover:bg-teal-50 text-[15px] font-semibold text-[#164E63] cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Thêm phương án</span>
+              </button>
             </div>
           )}
 
@@ -448,6 +765,16 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
                             {v === 'T' ? 'Đúng' : 'Sai'}
                           </button>
                         ))}
+                        {(question.tfStatements?.length || 0) > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteTfStatement(st.id)}
+                            className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                            title={`Xóa phát biểu ${st.label}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </div>
                     <input
@@ -613,6 +940,16 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
                         className="flex-1 min-h-[40px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[15.5px]"
                         placeholder="Nội dung cột A"
                       />
+                      {question.matching!.itemsA.length > 2 && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteMatchingItem('A', itemA.id)}
+                          className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 cursor-pointer shrink-0"
+                          title="Xóa mục cột A"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                     <select
                       value={currentPair?.toId || ''}
@@ -643,11 +980,31 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
                   const n = question.matching!.itemsA.length + 1;
                   const aId = `ma-${Date.now().toString(36)}-${n}`;
                   const bId = `mb-${Date.now().toString(36)}-${n}`;
+                  const lastA = question.matching!.itemsA[question.matching!.itemsA.length - 1]?.anchor;
+                  const lastB = question.matching!.itemsB[question.matching!.itemsB.length - 1]?.anchor;
                   onUpdateQuestion({
                     matching: {
                       ...question.matching!,
-                      itemsA: [...question.matching!.itemsA, { id: aId, label: `Mục A${n}` }],
-                      itemsB: [...question.matching!.itemsB, { id: bId, label: `Mục B${n}` }],
+                      itemsA: [
+                        ...question.matching!.itemsA,
+                        {
+                          id: aId,
+                          label: `Mục A${n}`,
+                          anchor: lastA
+                            ? { nx: lastA.nx, ny: Math.min(0.94, Number((lastA.ny + 0.05).toFixed(4))) }
+                            : undefined,
+                        },
+                      ],
+                      itemsB: [
+                        ...question.matching!.itemsB,
+                        {
+                          id: bId,
+                          label: `Mục B${n}`,
+                          anchor: lastB
+                            ? { nx: lastB.nx, ny: Math.min(0.94, Number((lastB.ny + 0.05).toFixed(4))) }
+                            : undefined,
+                        },
+                      ],
                     },
                   });
                   patchKey({
@@ -680,6 +1037,16 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
                       }}
                       className="flex-1 min-h-[40px] rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[15.5px]"
                     />
+                    {question.matching!.itemsB.length > 2 && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteMatchingItem('B', itemB.id)}
+                        className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 cursor-pointer shrink-0"
+                        title="Xóa mục cột B"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -744,10 +1111,12 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
             </div>
           )}
         </div>
+        )}
 
         {/* 3. Điểm */}
+        {activeAction !== 'content' && (
         <div className="space-y-2 pt-3 border-t border-slate-200">
-          <label className="block text-[16px] font-bold text-[#164E63]">3. Điểm của câu này</label>
+          <label className="block text-[16px] font-bold text-[#164E63]">Điểm của câu này</label>
           <div className="flex items-center gap-2 flex-wrap">
             <input
               type="number"
@@ -778,12 +1147,14 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
             </div>
           </div>
         </div>
+        )}
 
         {/* 4. Vị trí trả lời (không cần nhập tọa độ!) */}
+        {activeAction === 'interactive' && question.classificationStatus !== 'unclassified' && (
         <div className="space-y-2.5 pt-3 border-t border-slate-200">
-          <div className="text-[16px] font-bold text-[#164E63]">4. Vị trí chỗ trả lời trên PDF</div>
+          <div className="text-[16px] font-bold text-[#164E63]">Vị trí chỗ trả lời trên PDF</div>
           <p className="text-[14.5px] text-slate-600 -mt-1">
-            Thầy cô có thể kéo trực tiếp khung trên trang PDF, hoặc nhấn các nút dưới đây để dịch chuyển nhẹ:
+            Thầy cô có thể kéo trực tiếp ô chọn, điểm nối hoặc khung trả lời trên trang PDF, hoặc nhấn các nút dưới đây để dịch chuyển nhẹ:
           </p>
           <div className="grid grid-cols-2 gap-2">
             <button
@@ -836,8 +1207,10 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
             </button>
           </div>
         </div>
+        )}
 
         {/* Collapsible Advanced Options (kept completely out of the way by default) */}
+        {activeAction !== 'content' && (
         <div className="pt-3 border-t border-slate-200">
           <button
             type="button"
@@ -1005,42 +1378,7 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
             </div>
           )}
         </div>
-
-        {/* Delete with confirmation guard */}
-        <div className="pt-3 border-t border-slate-200">
-          {!confirmDelete ? (
-            <button
-              type="button"
-              onClick={() => setConfirmDelete(true)}
-              className="w-full inline-flex items-center justify-center gap-2 min-h-[44px] rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-[15.5px] cursor-pointer"
-            >
-              <Trash2 className="w-4 h-4" />
-              <span>Xóa câu hỏi này</span>
-            </button>
-          ) : (
-            <div className="rounded-xl bg-red-50 border-2 border-red-300 p-3.5 space-y-2.5">
-              <div className="text-[15.5px] font-bold text-red-900">
-                Thầy cô có chắc muốn xóa {question.code} không?
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={onDeleteQuestion}
-                  className="min-h-[44px] rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-[15.5px] cursor-pointer"
-                >
-                  Đúng, xóa câu này
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirmDelete(false)}
-                  className="min-h-[44px] rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 font-bold text-[15.5px] cursor-pointer"
-                >
-                  Giữ lại
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Sticky Footer: Lưu & Hủy */}

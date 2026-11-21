@@ -11,6 +11,7 @@ import {
   ClipboardCheck,
   Download,
   Edit3,
+  ExternalLink,
   Eye,
   FileDown,
   FileSpreadsheet,
@@ -20,23 +21,36 @@ import {
   GraduationCap,
   HardDrive,
   HelpCircle,
+  ImagePlus,
   Info,
   ListChecks,
   Loader2,
   PenTool,
   Plus,
+  Redo2,
   RotateCcw,
   Save,
   Send,
   Sparkles,
   Trash2,
+  Undo2,
   Upload,
   X,
   XCircle,
 } from 'lucide-react';
 import { useStudioStore } from '../../stores/useStudioStore';
+import { inspectPdfBytes } from '../../engines/pdf/pdfEngine';
 import { InteractivePdfCanvas } from './InteractivePdfCanvas';
 import { TeacherQuestionInspector } from './TeacherQuestionInspector';
+import {
+  applyPdfImageEdit,
+  applyPdfTableCellEdit,
+  applyPdfTextEdit,
+  inspectAllPagesEditableElements,
+  syncQuestionAndKeyAfterEdit,
+  type PageEditableElements,
+  type PdfEditableElement,
+} from './pdfDirectContentEditor';
 import { InteractiveGuidePanel } from './InteractiveGuidePanel';
 import { AssignmentManagerPanel } from './AssignmentManagerPanel';
 import {
@@ -395,6 +409,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
   const interactiveView = useStudioStore((s) => s.interactiveView);
   const setInteractiveTab = useStudioStore((s) => s.setInteractiveTab);
   const closeInteractive = useStudioStore((s) => s.closeInteractive);
+  const openStudioDocument = useStudioStore((s) => s.openDocument);
   const clearPendingInteractiveFile = useStudioStore((s) => s.clearPendingInteractiveFile);
   const documents = useStudioStore((s) => s.documents);
   const activeDocId = useStudioStore((s) => s.activeDocId);
@@ -464,6 +479,45 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
     questions: InteractiveQuestion[];
     keys: TeacherAnswerKeyMap;
   } | null>(null);
+
+  // ---- DIRECT EDITING ON PDF ("CHỈNH SỬA BÀI TẬP") + GLOBAL UNDO / REDO ----
+  const [directEditMode, setDirectEditMode] = useState(false);
+  const [directEditSubMode, setDirectEditSubMode] = useState<'content' | 'interactive'>('interactive');
+  const [editablePages, setEditablePages] = useState<PageEditableElements[]>([]);
+  const [inspectingEditablePages, setInspectingEditablePages] = useState(false);
+  const [selectedPdfElement, setSelectedPdfElement] = useState<PdfEditableElement | null>(null);
+  const [pdfElementDraftText, setPdfElementDraftText] = useState('');
+  const [pdfElementFontSize, setPdfElementFontSize] = useState(11.5);
+  const [pdfElementBold, setPdfElementBold] = useState(false);
+  const [applyingPdfEdit, setApplyingPdfEdit] = useState(false);
+  const [lastPdfEditNotice, setLastPdfEditNotice] = useState<{
+    mode: 'direct-stream' | 'visual-replacement';
+    message: string;
+  } | null>(null);
+  const [questionSyncWarnings, setQuestionSyncWarnings] = useState<Record<string, string>>({});
+  const [pendingAddImage, setPendingAddImage] = useState<{
+    bytes: Uint8Array;
+    mimeType: 'image/png' | 'image/jpeg';
+    fileName: string;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [authorUndoStack, setAuthorUndoStack] = useState<
+    Array<{
+      pdfBytes: Uint8Array;
+      worksheet: InteractiveWorksheet;
+      keys: TeacherAnswerKeyMap;
+    }>
+  >([]);
+  const [authorRedoStack, setAuthorRedoStack] = useState<
+    Array<{
+      pdfBytes: Uint8Array;
+      worksheet: InteractiveWorksheet;
+      keys: TeacherAnswerKeyMap;
+    }>
+  >([]);
+  const addImageInputRef = useRef<HTMLInputElement>(null);
+  const replaceImageInputRef = useRef<HTMLInputElement>(null);
   const pageSpecInputRef = useRef<HTMLInputElement>(null);
 
   // ---- TAB 3: STUDENT SOLVING STATE ----
@@ -1271,8 +1325,301 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
     notify(`Đã đổi ${existing.code} sang dạng "${QUESTION_TYPE_META[nextType].shortLabel}".`, 'info');
   };
 
+  const pushAuthorUndoSnapshot = useCallback(() => {
+    if (!authorPdfBytes || !authorWorksheet) return;
+    const snap = {
+      pdfBytes: new Uint8Array(authorPdfBytes),
+      worksheet: JSON.parse(JSON.stringify(authorWorksheet)) as InteractiveWorksheet,
+      keys: JSON.parse(JSON.stringify(authorKeys)) as TeacherAnswerKeyMap,
+    };
+    setAuthorUndoStack((prev) => [...prev.slice(-24), snap]);
+    setAuthorRedoStack([]);
+  }, [authorPdfBytes, authorWorksheet, authorKeys]);
+
+  const handleAuthorUndo = () => {
+    if (authorUndoStack.length === 0 || !authorPdfBytes || !authorWorksheet) return;
+    const prevSnap = authorUndoStack[authorUndoStack.length - 1];
+    const curSnap = {
+      pdfBytes: new Uint8Array(authorPdfBytes),
+      worksheet: JSON.parse(JSON.stringify(authorWorksheet)) as InteractiveWorksheet,
+      keys: JSON.parse(JSON.stringify(authorKeys)) as TeacherAnswerKeyMap,
+    };
+    setAuthorRedoStack((r) => [...r.slice(-24), curSnap]);
+    setAuthorUndoStack((u) => u.slice(0, -1));
+    setAuthorPdfBytes(prevSnap.pdfBytes);
+    setAuthorWorksheet(prevSnap.worksheet);
+    setAuthorKeys(prevSnap.keys);
+    setSelectedPdfElement(null);
+    notify('Đã hoàn tác thao tác vừa rồi.', 'info');
+  };
+
+  const handleAuthorRedo = () => {
+    if (authorRedoStack.length === 0 || !authorPdfBytes || !authorWorksheet) return;
+    const nextSnap = authorRedoStack[authorRedoStack.length - 1];
+    const curSnap = {
+      pdfBytes: new Uint8Array(authorPdfBytes),
+      worksheet: JSON.parse(JSON.stringify(authorWorksheet)) as InteractiveWorksheet,
+      keys: JSON.parse(JSON.stringify(authorKeys)) as TeacherAnswerKeyMap,
+    };
+    setAuthorUndoStack((u) => [...u.slice(-24), curSnap]);
+    setAuthorRedoStack((r) => r.slice(0, -1));
+    setAuthorPdfBytes(nextSnap.pdfBytes);
+    setAuthorWorksheet(nextSnap.worksheet);
+    setAuthorKeys(nextSnap.keys);
+    setSelectedPdfElement(null);
+    notify('Đã làm lại thao tác vừa hoàn tác.', 'info');
+  };
+
+  // Load editable PDF elements (text lines, table cells, images) whenever teacher enters Sửa nội dung PDF
+  useEffect(() => {
+    if (!directEditMode || directEditSubMode !== 'content' || !authorPdfBytes) {
+      return;
+    }
+    let active = true;
+    setInspectingEditablePages(true);
+    inspectAllPagesEditableElements(authorPdfBytes)
+      .then((pages) => {
+        if (!active) return;
+        setEditablePages(pages);
+      })
+      .catch(() => {
+        if (!active) return;
+        setEditablePages([]);
+      })
+      .finally(() => {
+        if (active) setInspectingEditablePages(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [directEditMode, directEditSubMode, authorPdfBytes]);
+
+  const handleSelectPdfElement = (el: PdfEditableElement | null) => {
+    setSelectedPdfElement(el);
+    if (!el) {
+      setPdfElementDraftText('');
+      return;
+    }
+    if (el.kind === 'text') {
+      setPdfElementDraftText(el.text);
+      setPdfElementFontSize(Math.max(8, Math.min(24, Math.round(el.fontSize * 10) / 10)));
+      setPdfElementBold(/bold/i.test(el.fontName));
+    } else if (el.kind === 'table-cell') {
+      setPdfElementDraftText(el.text);
+      setPdfElementFontSize(Math.max(8, Math.min(18, Math.round(el.fontSize * 10) / 10)));
+      setPdfElementBold(false);
+    }
+  };
+
+  const handleApplySelectedPdfTextEdit = async () => {
+    if (!authorPdfBytes || !authorWorksheet || !selectedPdfElement) return;
+    if (selectedPdfElement.kind === 'image') return;
+    setApplyingPdfEdit(true);
+    try {
+      pushAuthorUndoSnapshot();
+      const oldText = selectedPdfElement.text;
+      const result =
+        selectedPdfElement.kind === 'table-cell'
+          ? await applyPdfTableCellEdit(authorPdfBytes, selectedPdfElement, pdfElementDraftText, {
+              fontSize: pdfElementFontSize,
+              bold: pdfElementBold,
+            })
+          : await applyPdfTextEdit(authorPdfBytes, {
+              pageIndex: selectedPdfElement.pageIndex,
+              rect: {
+                x: selectedPdfElement.x,
+                y: selectedPdfElement.y,
+                width: selectedPdfElement.width,
+                height: selectedPdfElement.height,
+              },
+              originalText: oldText,
+              newText: pdfElementDraftText,
+              fontSize: pdfElementFontSize,
+              bold: pdfElementBold,
+            });
+
+      setAuthorPdfBytes(result.pdfBytes);
+      setLastPdfEditNotice({ mode: result.mode, message: result.message });
+
+      // Synchronize linked interactive questions & answer keys (NEVER silently wiping teacher data!)
+      const nextWarnings = { ...questionSyncWarnings };
+      let anySynced = false;
+      const syncedQuestions = authorWorksheet.questions.map((q) => {
+        const res = syncQuestionAndKeyAfterEdit(q, authorKeys[q.id], {
+          kind: 'pdf-text-edited',
+          pageIndex: selectedPdfElement.pageIndex,
+          rect: {
+            x: selectedPdfElement.x,
+            y: selectedPdfElement.y,
+            width: selectedPdfElement.width,
+            height: selectedPdfElement.height,
+          },
+          oldText,
+          newText: pdfElementDraftText,
+        });
+        if (res.changed) anySynced = true;
+        if (res.syncWarning) nextWarnings[q.id] = res.syncWarning;
+        return res.question;
+      });
+      if (anySynced) {
+        setAuthorWorksheet({
+          ...authorWorksheet,
+          questions: syncedQuestions,
+          updatedAt: Date.now(),
+        });
+        setQuestionSyncWarnings(nextWarnings);
+      }
+
+      setSelectedPdfElement(null);
+      setPdfElementDraftText('');
+      notify(result.message, 'success');
+    } catch (err) {
+      notify(
+        err instanceof Error ? err.message : 'Không thể cập nhật nội dung trên trang PDF.',
+        'error'
+      );
+    } finally {
+      setApplyingPdfEdit(false);
+    }
+  };
+
+  const readPickedImageFile = async (
+    file: File
+  ): Promise<{
+    bytes: Uint8Array;
+    mimeType: 'image/png' | 'image/jpeg';
+    fileName: string;
+    width: number;
+    height: number;
+  }> => {
+    const isPng = file.type === 'image/png' || /\.png$/i.test(file.name);
+    const isJpg = file.type === 'image/jpeg' || /\.jpe?g$/i.test(file.name);
+    if (!isPng && !isJpg) {
+      throw new Error('Vui lòng chọn tệp ảnh PNG hoặc JPG.');
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const dims = await new Promise<{ width: number; height: number }>((resolve) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        resolve({ width: img.naturalWidth || 200, height: img.naturalHeight || 140 });
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve({ width: 200, height: 140 });
+      };
+      img.src = url;
+    });
+    return {
+      bytes,
+      mimeType: isPng ? 'image/png' : 'image/jpeg',
+      fileName: file.name,
+      width: dims.width,
+      height: dims.height,
+    };
+  };
+
+  const handlePickAddImageFile = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    try {
+      const picked = await readPickedImageFile(file);
+      setPendingAddImage(picked);
+      setDirectEditMode(true);
+      setDirectEditSubMode('content');
+      setSelectedPdfElement(null);
+      notify('Đã chọn ảnh. Thầy cô hãy nhấn vào vị trí cần chèn trên trang PDF bên phải.', 'info');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Không thể đọc tệp hình ảnh.', 'error');
+    }
+  };
+
+  const handlePlaceNewImageOnPage = async (pageIndex: number, pdfX: number, pdfY: number) => {
+    if (!pendingAddImage || !authorPdfBytes) return;
+    setApplyingPdfEdit(true);
+    try {
+      pushAuthorUndoSnapshot();
+      const targetW = Math.min(240, Math.max(90, pendingAddImage.width * 0.45));
+      const aspect = pendingAddImage.height / Math.max(1, pendingAddImage.width);
+      const targetH = Math.min(220, Math.max(60, targetW * aspect));
+      const res = await applyPdfImageEdit(authorPdfBytes, {
+        pageIndex,
+        action: 'add',
+        rect: { x: pdfX, y: pdfY, width: targetW, height: targetH },
+        imageBytes: pendingAddImage.bytes,
+        mimeType: pendingAddImage.mimeType,
+      });
+      setAuthorPdfBytes(res.pdfBytes);
+      setPendingAddImage(null);
+      setLastPdfEditNotice({ mode: res.mode, message: res.message });
+      notify(res.message, 'success');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Không thể chèn hình ảnh vào PDF.', 'error');
+    } finally {
+      setApplyingPdfEdit(false);
+    }
+  };
+
+  const handleReplaceSelectedImageFile = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file || !authorPdfBytes || !selectedPdfElement || selectedPdfElement.kind !== 'image') return;
+    setApplyingPdfEdit(true);
+    try {
+      pushAuthorUndoSnapshot();
+      const picked = await readPickedImageFile(file);
+      const rect = {
+        x: selectedPdfElement.x,
+        y: selectedPdfElement.y,
+        width: selectedPdfElement.width,
+        height: selectedPdfElement.height,
+      };
+      const res = await applyPdfImageEdit(authorPdfBytes, {
+        pageIndex: selectedPdfElement.pageIndex,
+        action: 'replace',
+        rect,
+        clearRect: rect,
+        imageBytes: picked.bytes,
+        mimeType: picked.mimeType,
+      });
+      setAuthorPdfBytes(res.pdfBytes);
+      setSelectedPdfElement(null);
+      setLastPdfEditNotice({ mode: res.mode, message: res.message });
+      notify(res.message, 'success');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Không thể thay thế hình ảnh trên PDF.', 'error');
+    } finally {
+      setApplyingPdfEdit(false);
+    }
+  };
+
+  const handleOpenInFullPdfEditor = async () => {
+    if (!authorPdfBytes || !authorWorksheet) return;
+    try {
+      const inspected = await inspectPdfBytes(authorPdfBytes);
+      openStudioDocument({
+        title: authorWorksheet.title,
+        fileName: `${authorWorksheet.title.slice(0, 50)}.pdf`,
+        pdfBytes: new Uint8Array(authorPdfBytes),
+        pages: inspected.pages,
+        subjectHint: authorWorksheet.subject,
+      });
+      closeInteractive();
+      notify(
+        'Đã mở tài liệu trong Trình biên tập PDF đầy đủ của PDF EDU STUDIO. Sau khi biên tập xong, thầy cô có thể quay lại phân hệ Bài tập PDF tương tác.',
+        'info'
+      );
+    } catch (err) {
+      notify(
+        err instanceof Error ? err.message : 'Không thể chuyển sang Trình biên tập PDF đầy đủ.',
+        'error'
+      );
+    }
+  };
+
   const deleteAuthorQuestion = (qId: string) => {
     if (!authorWorksheet) return;
+    pushAuthorUndoSnapshot();
     setAuthorWorksheet({
       ...authorWorksheet,
       updatedAt: Date.now(),
@@ -2233,12 +2580,28 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                   question={selectedAuthorQuestion}
                   answerKey={authorKeys[selectedAuthorQuestion.id]}
                   examMode={authorWorksheet.examMode}
+                  syncWarning={questionSyncWarnings[selectedAuthorQuestion.id] || null}
+                  onDismissSyncWarning={() =>
+                    setQuestionSyncWarnings((prev) => {
+                      const next = { ...prev };
+                      delete next[selectedAuthorQuestion.id];
+                      return next;
+                    })
+                  }
+                  onEnterContentEdit={() => {
+                    setSelectedAuthorQId(null);
+                    setEditingQuestionSnapshot(null);
+                    setDirectEditMode(true);
+                    setDirectEditSubMode('content');
+                  }}
+                  onOpenFullPdfEditor={handleOpenInFullPdfEditor}
                   onUpdateQuestion={(patch) =>
                     updateAuthorQuestion(selectedAuthorQuestion.id, patch)
                   }
-                  onChangeQuestionType={(nextType) =>
-                    handleChangeAuthorQuestionType(selectedAuthorQuestion.id, nextType)
-                  }
+                  onChangeQuestionType={(nextType) => {
+                    pushAuthorUndoSnapshot();
+                    handleChangeAuthorQuestionType(selectedAuthorQuestion.id, nextType);
+                  }}
                   onUpdateKey={(nextKey) =>
                     setAuthorKeys((prev) => ({
                       ...prev,
@@ -2877,13 +3240,282 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                           </div>
                         )}
 
-                        {/* Primary 4 Action Buttons (min 48px, never crowded) */}
+                        {/* Hidden file inputs for Direct PDF Image Add & Replace */}
+                        <input
+                          ref={addImageInputRef}
+                          type="file"
+                          accept="image/png,image/jpeg"
+                          className="hidden"
+                          onChange={(e) => {
+                            handlePickAddImageFile(e.target.files);
+                            e.target.value = '';
+                          }}
+                        />
+                        <input
+                          ref={replaceImageInputRef}
+                          type="file"
+                          accept="image/png,image/jpeg"
+                          className="hidden"
+                          onChange={(e) => {
+                            handleReplaceSelectedImageFile(e.target.files);
+                            e.target.value = '';
+                          }}
+                        />
+
+                        {/* Prominent CHỈNH SỬA BÀI TẬP Toggle + Undo / Redo Bar */}
+                        <div className="rounded-xl border-2 border-[#164E63]/20 bg-[#F4F8F7] p-3 space-y-2.5">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDirectEditMode((v) => {
+                                  const next = !v;
+                                  if (!next) {
+                                    setSelectedPdfElement(null);
+                                    setPendingAddImage(null);
+                                  }
+                                  return next;
+                                });
+                              }}
+                              className={`flex-1 inline-flex items-center justify-center gap-2 min-h-[48px] px-3.5 rounded-xl font-bold text-[16px] cursor-pointer transition-colors ${
+                                directEditMode
+                                  ? 'bg-[#164E63] text-white shadow-xs'
+                                  : 'bg-white border-2 border-[#164E63] text-[#164E63] hover:bg-[#E6F1EF]'
+                              }`}
+                            >
+                              <Edit3 className="w-5 h-5 shrink-0" />
+                              <span>{directEditMode ? 'ĐANG CHỈNH SỬA BÀI TẬP' : 'CHỈNH SỬA BÀI TẬP'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={authorUndoStack.length === 0}
+                              onClick={handleAuthorUndo}
+                              title="Hoàn tác"
+                              className="inline-flex items-center justify-center min-w-[44px] min-h-[48px] px-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 text-[#164E63] font-bold cursor-pointer"
+                            >
+                              <Undo2 className="w-5 h-5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={authorRedoStack.length === 0}
+                              onClick={handleAuthorRedo}
+                              title="Làm lại"
+                              className="inline-flex items-center justify-center min-w-[44px] min-h-[48px] px-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-40 text-[#164E63] font-bold cursor-pointer"
+                            >
+                              <Redo2 className="w-5 h-5" />
+                            </button>
+                          </div>
+
+                          {directEditMode && (
+                            <div className="space-y-3 pt-1">
+                              {/* Two Clear Modes: A. Sửa nội dung PDF vs B. Sửa cách trả lời */}
+                              <div className="grid grid-cols-2 gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDirectEditSubMode('content');
+                                    setPlacingType(null);
+                                  }}
+                                  className={`min-h-[44px] px-2.5 py-1.5 rounded-xl border text-[15px] font-bold cursor-pointer transition-colors ${
+                                    directEditSubMode === 'content'
+                                      ? 'bg-[#087F70] border-[#087F70] text-white'
+                                      : 'bg-white border-slate-300 text-[#164E63] hover:bg-teal-50'
+                                  }`}
+                                >
+                                  Sửa nội dung PDF
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDirectEditSubMode('interactive');
+                                    setSelectedPdfElement(null);
+                                    setPendingAddImage(null);
+                                  }}
+                                  className={`min-h-[44px] px-2.5 py-1.5 rounded-xl border text-[15px] font-bold cursor-pointer transition-colors ${
+                                    directEditSubMode === 'interactive'
+                                      ? 'bg-[#087F70] border-[#087F70] text-white'
+                                      : 'bg-white border-slate-300 text-[#164E63] hover:bg-teal-50'
+                                  }`}
+                                >
+                                  Sửa cách trả lời
+                                </button>
+                              </div>
+
+                              {directEditSubMode === 'content' ? (
+                                <div className="space-y-3">
+                                  {/* Honest Editability Info */}
+                                  {inspectingEditablePages ? (
+                                    <div className="flex items-center gap-2 text-[14.5px] text-[#164E63] font-medium">
+                                      <Loader2 className="w-4 h-4 animate-spin text-[#087F70]" />
+                                      <span>Đang đọc chữ, bảng và hình trên PDF...</span>
+                                    </div>
+                                  ) : (
+                                    <div className="rounded-lg bg-white border border-teal-200 px-3 py-2 text-[14.5px] text-slate-700 leading-relaxed">
+                                      {editablePages[0]?.isScannedPage
+                                        ? editablePages[0].editabilitySummary
+                                        : 'Nhấn trực tiếp vào dòng chữ, ô bảng (viền xanh) hoặc hình ảnh (viền cam) trên trang PDF bên phải để sửa.'}
+                                    </div>
+                                  )}
+
+                                  {lastPdfEditNotice && (
+                                    <div
+                                      className={`rounded-lg px-3 py-2 text-[14px] leading-snug border ${
+                                        lastPdfEditNotice.mode === 'direct-stream'
+                                          ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                                          : 'bg-amber-50 border-amber-300 text-amber-950'
+                                      }`}
+                                    >
+                                      {lastPdfEditNotice.message}
+                                    </div>
+                                  )}
+
+                                  {/* Selected PDF Element Editor (NO giant covering popup!) */}
+                                  {selectedPdfElement && (
+                                    <div className="rounded-xl bg-white border-2 border-[#087F70] p-3.5 space-y-3 shadow-2xs">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="text-[15.5px] font-bold text-[#164E63]">
+                                          {selectedPdfElement.kind === 'table-cell'
+                                            ? `Sửa ô bảng (Dòng ${selectedPdfElement.row + 1}, Cột ${selectedPdfElement.col + 1})`
+                                            : selectedPdfElement.kind === 'image'
+                                              ? `Chỉnh ${selectedPdfElement.label}`
+                                              : 'Sửa dòng chữ trên PDF'}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => setSelectedPdfElement(null)}
+                                          className="p-1 rounded-lg hover:bg-slate-100 text-slate-500 cursor-pointer"
+                                          title="Đóng"
+                                        >
+                                          <X className="w-4 h-4" />
+                                        </button>
+                                      </div>
+
+                                      {selectedPdfElement.kind === 'image' ? (
+                                        <div className="space-y-2.5">
+                                          <p className="text-[14.5px] text-slate-700">
+                                            Chọn ảnh mới (PNG/JPG) để thay đúng vào vị trí hình này trên trang PDF:
+                                          </p>
+                                          <button
+                                            type="button"
+                                            disabled={applyingPdfEdit}
+                                            onClick={() => replaceImageInputRef.current?.click()}
+                                            className="w-full inline-flex items-center justify-center gap-2 min-h-[44px] rounded-xl bg-[#087F70] hover:bg-[#06695d] text-white font-bold text-[15.5px] cursor-pointer"
+                                          >
+                                            <ImagePlus className="w-5 h-5" />
+                                            <span>Chọn ảnh mới để thay thế</span>
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <div className="space-y-2.5">
+                                          <textarea
+                                            rows={3}
+                                            value={pdfElementDraftText}
+                                            onChange={(e) => setPdfElementDraftText(e.target.value)}
+                                            className="w-full rounded-xl border border-slate-300 focus:border-[#087F70] px-3 py-2 text-[16px] text-slate-900 leading-relaxed outline-none"
+                                            placeholder="Nhập nội dung mới..."
+                                          />
+                                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                                            <label className="inline-flex items-center gap-1.5 text-[14.5px] font-semibold text-slate-700">
+                                              <span>Cỡ chữ:</span>
+                                              <input
+                                                type="number"
+                                                min={8}
+                                                max={24}
+                                                step={0.5}
+                                                value={pdfElementFontSize}
+                                                onChange={(e) =>
+                                                  setPdfElementFontSize(
+                                                    Math.max(8, Math.min(24, Number(e.target.value) || 11))
+                                                  )
+                                                }
+                                                className="w-18 min-h-[36px] rounded-lg border border-slate-300 px-2 text-[15px] font-bold text-[#164E63]"
+                                              />
+                                            </label>
+                                            <label className="inline-flex items-center gap-1.5 text-[14.5px] font-semibold text-slate-700 cursor-pointer">
+                                              <input
+                                                type="checkbox"
+                                                checked={pdfElementBold}
+                                                onChange={(e) => setPdfElementBold(e.target.checked)}
+                                                className="accent-[#087F70] w-4 h-4"
+                                              />
+                                              <span>In đậm</span>
+                                            </label>
+                                          </div>
+                                          <div className="grid grid-cols-2 gap-2 pt-1">
+                                            <button
+                                              type="button"
+                                              disabled={applyingPdfEdit}
+                                              onClick={() => setSelectedPdfElement(null)}
+                                              className="min-h-[44px] rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-bold text-[15.5px] cursor-pointer"
+                                            >
+                                              Hủy
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={applyingPdfEdit}
+                                              onClick={handleApplySelectedPdfTextEdit}
+                                              className="min-h-[44px] rounded-xl bg-[#087F70] hover:bg-[#06695d] disabled:opacity-50 text-white font-bold text-[15.5px] cursor-pointer"
+                                            >
+                                              {applyingPdfEdit ? 'Đang lưu...' : 'Lưu vào PDF'}
+                                            </button>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {/* Add Image & Open Full Existing PDF Editor */}
+                                  <div className="grid grid-cols-1 gap-2">
+                                    {pendingAddImage ? (
+                                      <div className="rounded-xl bg-amber-50 border border-amber-300 p-3 flex items-center justify-between gap-2 text-[14.5px] text-amber-950">
+                                        <span>
+                                          Đang chờ đặt ảnh <strong>{pendingAddImage.fileName}</strong>: nhấn vào trang PDF.
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => setPendingAddImage(null)}
+                                          className="px-2.5 py-1 rounded-lg bg-white border border-amber-400 font-bold cursor-pointer shrink-0"
+                                        >
+                                          Hủy
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => addImageInputRef.current?.click()}
+                                        className="w-full inline-flex items-center justify-center gap-2 min-h-[44px] px-3 rounded-xl border border-slate-300 bg-white hover:bg-teal-50 text-[#164E63] font-bold text-[15px] cursor-pointer"
+                                      >
+                                        <ImagePlus className="w-4 h-4 text-[#087F70]" />
+                                        <span>Chèn thêm hình ảnh vào trang PDF</span>
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={handleOpenInFullPdfEditor}
+                                      className="w-full inline-flex items-center justify-center gap-2 min-h-[44px] px-3 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-[#164E63] font-bold text-[15px] cursor-pointer"
+                                    >
+                                      <ExternalLink className="w-4 h-4 text-[#087F70]" />
+                                      <span>Mở trong Trình biên tập PDF đầy đủ</span>
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="rounded-lg bg-white border border-teal-200 px-3 py-2.5 text-[14.5px] text-slate-700 leading-relaxed">
+                                  Thầy cô có thể <strong>kéo trực tiếp</strong> ô chọn, điểm nối, ô điền hoặc khung trả lời trên trang PDF bên phải, hoặc nhấn vào một câu trong danh sách bên dưới để đổi dạng câu hỏi, thêm/xóa đáp án và đặt đáp án đúng.
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Primary Action Buttons (min 48px, never crowded) */}
                         <div className="space-y-2.5">
                           <div className="grid grid-cols-2 gap-2.5">
                             <button
                               type="button"
                               onClick={() => {
                                 setAuthorPreviewStudent(true);
+                                setDirectEditMode(false);
                                 setPlacingType(null);
                               }}
                               className="inline-flex items-center justify-center gap-2 min-h-[48px] px-3 rounded-xl border-2 border-[#164E63] bg-white hover:bg-[#E6F1EF] text-[#164E63] font-bold text-[15.5px] cursor-pointer"
@@ -3473,10 +4105,18 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                     teacherModified: true,
                   });
               }}
+              onUpdateQuestion={(qId, patch) => updateAuthorQuestion(qId, patch)}
               onDeleteQuestion={deleteAuthorQuestion}
               onChangeAnswer={(qId, next) =>
                 setAuthorPreviewAnswers((prev) => ({ ...prev, [qId]: next }))
               }
+              directEditMode={!authorPreviewStudent && directEditMode}
+              directEditSubMode={directEditSubMode}
+              editablePages={editablePages}
+              selectedPdfElement={selectedPdfElement}
+              onSelectPdfElement={handleSelectPdfElement}
+              placingImageActive={Boolean(!authorPreviewStudent && pendingAddImage)}
+              onClickPageToAddImage={handlePlaceNewImageOnPage}
             />
           </div>
         </div>

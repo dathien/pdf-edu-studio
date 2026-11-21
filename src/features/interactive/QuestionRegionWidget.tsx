@@ -54,9 +54,11 @@ interface QuestionRegionWidgetProps {
   gradingDetail?: QuestionGradingDetail;
   onSelect?: () => void;
   onUpdateRegion?: (patch: Partial<InteractiveQuestion['region']>) => void;
+  onUpdateQuestion?: (patch: Partial<InteractiveQuestion>) => void;
   onDeleteQuestion?: () => void;
   onChangeAnswer?: (next: StudentQuestionAnswer) => void;
   onOpenAnswerDrawer?: (questionId: string) => void;
+  directEditInteractive?: boolean;
 }
 
 const FORMULA_QUICK_SNIPPETS = [
@@ -145,9 +147,11 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
   gradingDetail,
   onSelect,
   onUpdateRegion,
+  onUpdateQuestion,
   onDeleteQuestion,
   onChangeAnswer,
   onOpenAnswerDrawer,
+  directEditInteractive = false,
 }) => {
   const readOnly = mode !== 'solve';
   const [penColor, setPenColor] = useState('#164E63');
@@ -245,6 +249,39 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
         nw: Number((nwPt / pageWidth).toFixed(4)),
         nh: Number((nhPt / pageHeight).toFixed(4)),
       });
+    };
+    const handleUp = () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+  };
+
+  // ---- AUTHOR MODE: DIRECT DRAGGING OF NORMALIZED ANCHORS ON PDF CANVAS ----
+  const startAnchorDrag = (
+    e: React.PointerEvent,
+    origNx: number,
+    origNy: number,
+    onDragNorm: (nx: number, ny: number) => void
+  ) => {
+    if (mode !== 'author' || !onUpdateQuestion) return;
+    e.stopPropagation();
+    onSelect?.();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const pageCssW = Math.max(1, pageWidth * zoom);
+    const pageCssH = Math.max(1, pageHeight * zoom);
+    let moved = false;
+
+    const handleMove = (ev: PointerEvent) => {
+      const dxPx = ev.clientX - startX;
+      const dyPx = ev.clientY - startY;
+      if (!moved && Math.hypot(dxPx, dyPx) < 3) return;
+      moved = true;
+      const nextNx = Number(Math.max(0.015, Math.min(0.985, origNx + dxPx / pageCssW)).toFixed(4));
+      const nextNy = Number(Math.max(0.015, Math.min(0.985, origNy + dyPx / pageCssH)).toFixed(4));
+      onDragNorm(nextNx, nextNy);
     };
     const handleUp = () => {
       window.removeEventListener('pointermove', handleMove);
@@ -550,6 +587,16 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                 width: `${hitSize}px`,
                 height: `${hitSize}px`,
               }}
+              onPointerDown={(e) => {
+                if (mode === 'author' && onUpdateQuestion) {
+                  startAnchorDrag(e, anc.nx, anc.ny, (nx, ny) => {
+                    const nextOpts = opts.map((o) =>
+                      o.id === opt.id ? { ...o, anchor: { nx, ny } } : o
+                    );
+                    onUpdateQuestion({ mcqOptions: nextOpts, teacherModified: true });
+                  });
+                }
+              }}
               onClick={(e) => {
                 e.stopPropagation();
                 if (mode === 'author' || mode === 'grade') {
@@ -569,19 +616,27 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                 }
               }}
               aria-label={`${question.code} - Phương án ${opt.label}`}
-              title={`${opt.label}. ${opt.text}`}
+              title={
+                mode === 'author'
+                  ? `Kéo để dời vị trí ô chọn ${opt.label} trên PDF (${opt.text})`
+                  : `${opt.label}. ${opt.text}`
+              }
               className={`pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 flex items-center justify-center transition-all ${
                 isMulti ? 'rounded-md' : 'rounded-md'
               } ${
-                readOnly ? 'cursor-pointer' : 'cursor-pointer hover:scale-110'
+                mode === 'author'
+                  ? 'cursor-move hover:scale-110'
+                  : readOnly
+                    ? 'cursor-pointer'
+                    : 'cursor-pointer hover:scale-110'
               } ${
                 checked
                   ? 'bg-[#087F70] border-2 border-[#087F70] text-white shadow-xs'
                   : isCorrectKey
                     ? 'bg-emerald-100/90 border-2 border-emerald-600 text-emerald-800'
                     : mode === 'author'
-                      ? selected
-                        ? 'bg-teal-50/70 border-2 border-[#087F70] text-[#087F70]'
+                      ? selected || directEditInteractive
+                        ? 'bg-teal-50/85 border-2 border-[#087F70] text-[#087F70] ring-2 ring-teal-200'
                         : 'bg-teal-50/40 border border-dashed border-[#087F70] text-[#164E63]'
                       : 'bg-white/35 border-2 border-[#164E63]/65 hover:border-[#087F70] hover:bg-teal-50/50 text-transparent'
               }`}
@@ -673,6 +728,26 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                       width: `${btnSize}px`,
                       height: `${btnSize}px`,
                     }}
+                    onPointerDown={(e) => {
+                      if (mode === 'author' && onUpdateQuestion) {
+                        startAnchorDrag(e, col.nx, ra.ny, (nx, ny) => {
+                          const nextStmts = stmts.map((item) =>
+                            item.id === st.id && item.rowAnchor
+                              ? {
+                                  ...item,
+                                  rowAnchor: {
+                                    ...item.rowAnchor,
+                                    ny,
+                                    trueNx: col.val === 'T' ? nx : item.rowAnchor.trueNx,
+                                    falseNx: col.val === 'F' ? nx : item.rowAnchor.falseNx,
+                                  },
+                                }
+                              : item
+                          );
+                          onUpdateQuestion({ tfStatements: nextStmts, teacherModified: true });
+                        });
+                      }
+                    }}
                     onClick={(e) => {
                       e.stopPropagation();
                       if (mode === 'author' || mode === 'grade') {
@@ -687,14 +762,22 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                       }
                       patchAnswer({ tfAnswers: nextMap });
                     }}
-                    title={`${st.label} ${col.val === 'T' ? 'Đúng' : 'Sai'}`}
-                    className={`pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 rounded-md flex items-center justify-center text-[12px] font-black transition-all cursor-pointer ${
+                    title={
+                      mode === 'author'
+                        ? `Kéo để chỉnh vị trí nút ${col.val === 'T' ? 'Đúng' : 'Sai'} của ${st.label}`
+                        : `${st.label} ${col.val === 'T' ? 'Đúng' : 'Sai'}`
+                    }
+                    className={`pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 rounded-md flex items-center justify-center text-[12px] font-black transition-all ${
+                      mode === 'author' ? 'cursor-move' : 'cursor-pointer'
+                    } ${
                       active
                         ? 'bg-[#087F70] border-2 border-[#087F70] text-white shadow-xs'
                         : isKey
                           ? 'bg-emerald-100 border-2 border-emerald-600 text-emerald-800'
                           : mode === 'author'
-                            ? 'bg-teal-50/55 border border-dashed border-[#087F70] text-[#164E63]'
+                            ? selected || directEditInteractive
+                              ? 'bg-teal-50/85 border-2 border-[#087F70] text-[#087F70]'
+                              : 'bg-teal-50/55 border border-dashed border-[#087F70] text-[#164E63]'
                             : 'bg-white/45 border border-[#164E63]/55 hover:border-[#087F70] hover:bg-teal-50/70 text-[#164E63]'
                     }`}
                   >
@@ -941,7 +1024,21 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                 height: `${portR * 2}px`,
               }}
               onPointerDown={(ev) => {
-                if (mode === 'solve') startAnchoredDrag(ev, itemA.id, cx, cy);
+                if (mode === 'solve') {
+                  startAnchoredDrag(ev, itemA.id, cx, cy);
+                } else if (mode === 'author' && onUpdateQuestion && question.matching) {
+                  startAnchorDrag(ev, itemA.anchor!.nx, itemA.anchor!.ny, (nx, ny) => {
+                    onUpdateQuestion({
+                      matching: {
+                        ...question.matching!,
+                        itemsA: itemsA.map((a) =>
+                          a.id === itemA.id ? { ...a, anchor: { nx, ny } } : a
+                        ),
+                      },
+                      teacherModified: true,
+                    });
+                  });
+                }
               }}
               onClick={(ev) => {
                 ev.stopPropagation();
@@ -951,13 +1048,21 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                 }
                 setSelectedMatchAId((prev) => (prev === itemA.id ? null : itemA.id));
               }}
-              title={`Kéo hoặc nhấn từ mục ${idx + 1} sang cột phải để nối`}
-              className={`pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 flex items-center justify-center text-[10px] font-black transition-transform cursor-pointer ${
+              title={
+                mode === 'author'
+                  ? `Kéo để dời điểm nối ${idx + 1} (cột trái) trên PDF`
+                  : `Kéo hoặc nhấn từ mục ${idx + 1} sang cột phải để nối`
+              }
+              className={`pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 flex items-center justify-center text-[10px] font-black transition-transform ${
+                mode === 'author' ? 'cursor-move' : 'cursor-pointer'
+              } ${
                 isSelectedA
                   ? 'bg-[#087F70] border-white text-white ring-4 ring-teal-300/70 scale-125'
                   : isConnected
                     ? 'bg-[#087F70] border-white text-white shadow-xs'
-                    : 'bg-white border-[#087F70] text-[#087F70] hover:scale-115 shadow-2xs'
+                    : mode === 'author' && (selected || directEditInteractive)
+                      ? 'bg-teal-50 border-[#087F70] text-[#087F70] ring-2 ring-teal-200'
+                      : 'bg-white border-[#087F70] text-[#087F70] hover:scale-115 shadow-2xs'
               }`}
             >
               {idx + 1}
@@ -981,6 +1086,21 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                 width: `${portR * 2}px`,
                 height: `${portR * 2}px`,
               }}
+              onPointerDown={(ev) => {
+                if (mode === 'author' && onUpdateQuestion && question.matching) {
+                  startAnchorDrag(ev, itemB.anchor!.nx, itemB.anchor!.ny, (nx, ny) => {
+                    onUpdateQuestion({
+                      matching: {
+                        ...question.matching!,
+                        itemsB: itemsB.map((b) =>
+                          b.id === itemB.id ? { ...b, anchor: { nx, ny } } : b
+                        ),
+                      },
+                      teacherModified: true,
+                    });
+                  });
+                }
+              }}
               onClick={(ev) => {
                 ev.stopPropagation();
                 if (mode === 'author' || mode === 'grade') {
@@ -992,16 +1112,22 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                 }
               }}
               title={
-                selectedMatchAId
-                  ? `Nhấn để nối vào mục ${letter}`
-                  : `Điểm nối ${letter} (chọn điểm bên trái trước hoặc kéo đường nối tới đây)`
+                mode === 'author'
+                  ? `Kéo để dời điểm nối ${letter} (cột phải) trên PDF`
+                  : selectedMatchAId
+                    ? `Nhấn để nối vào mục ${letter}`
+                    : `Điểm nối ${letter} (chọn điểm bên trái trước hoặc kéo đường nối tới đây)`
               }
-              className={`pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 flex items-center justify-center text-[10px] font-black transition-transform cursor-pointer ${
+              className={`pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 flex items-center justify-center text-[10px] font-black transition-transform ${
+                mode === 'author' ? 'cursor-move' : 'cursor-pointer'
+              } ${
                 selectedMatchAId
                   ? 'bg-teal-50 border-[#087F70] text-[#164E63] ring-2 ring-teal-200 hover:scale-125'
                   : isConnected
                     ? 'bg-[#164E63] border-white text-white shadow-xs'
-                    : 'bg-white border-[#164E63] text-[#164E63] hover:scale-115 shadow-2xs'
+                    : mode === 'author' && (selected || directEditInteractive)
+                      ? 'bg-sky-50 border-[#164E63] text-[#164E63] ring-2 ring-sky-200'
+                      : 'bg-white border-[#164E63] text-[#164E63] hover:scale-115 shadow-2xs'
               }`}
             >
               {letter}
@@ -1069,6 +1195,18 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
               type="text"
               readOnly={readOnly}
               value={answer?.fillBlankAnswers?.[slot.id] || ''}
+              onPointerDown={(e) => {
+                if (mode === 'author' && onUpdateQuestion) {
+                  startAnchorDrag(e, anc.nx, anc.ny, (nx, ny) => {
+                    const nextSlots = slots.map((s) =>
+                      s.id === slot.id && s.anchor
+                        ? { ...s, anchor: { ...s.anchor, nx, ny } }
+                        : s
+                    );
+                    onUpdateQuestion({ fillBlanks: nextSlots, teacherModified: true });
+                  });
+                }
+              }}
               onClick={(e) => {
                 e.stopPropagation();
                 if (mode === 'author' || mode === 'grade') onSelect?.();
@@ -1082,13 +1220,16 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                 })
               }
               placeholder={slot.placeholder || 'Nhập...'}
+              title={mode === 'author' ? 'Kéo để dời vị trí ô điền trên trang PDF' : undefined}
               style={{
                 left: `${left}px`,
                 top: `${top}px`,
                 width: `${w}px`,
                 fontSize: `${Math.max(12, Math.round(13 * zoom))}px`,
               }}
-              className="pointer-events-auto absolute -translate-y-1/2 rounded-sm border-b-2 border-[#087F70] bg-white/85 px-1.5 py-0.5 font-semibold text-[#164E63] outline-none focus:bg-white focus:ring-2 focus:ring-teal-200"
+              className={`pointer-events-auto absolute -translate-y-1/2 rounded-sm border-b-2 border-[#087F70] bg-white/85 px-1.5 py-0.5 font-semibold text-[#164E63] outline-none focus:bg-white focus:ring-2 focus:ring-teal-200 ${
+                mode === 'author' ? 'cursor-move ring-1 ring-teal-300' : ''
+              }`}
             />
           );
         })}
