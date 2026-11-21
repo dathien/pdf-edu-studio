@@ -260,6 +260,8 @@ export const DiagramLibraryPanel: React.FC<DiagramLibraryPanelProps> = ({ doc })
                 ['math', 'Toán'],
                 ['physics', 'Vật lí'],
                 ['chemistry', 'Hóa học'],
+                ['biology', 'Sinh học'],
+                ['cs', 'Tin học'],
                 ['geography', 'Địa lí'],
                 ['history', 'Lịch sử'],
                 ['english', 'Tiếng Anh'],

@@ -17,6 +17,7 @@ import {
   Merge,
   RotateCcw,
   ScanText,
+  Search,
   Trash2,
   Upload,
   X,
@@ -50,6 +51,7 @@ export const WelcomeScreen: React.FC = () => {
   const [gradeFilter, setGradeFilter] = useState<'all' | GradeLevel>('all');
   const [docTypeFilter, setDocTypeFilter] = useState<string>('all');
   const [formatFilter, setFormatFilter] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [isDragging, setIsDragging] = useState(false);
 
   // Inline real PDF preview state (no disruptive popup)
@@ -85,26 +87,43 @@ export const WelcomeScreen: React.FC = () => {
   }, []);
 
   const filteredSamples = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
     return SAMPLE_DOCUMENTS.filter((s) => {
       if (subjectFilter !== 'all' && s.subject !== subjectFilter) return false;
       if (gradeFilter !== 'all' && s.grade !== gradeFilter) return false;
       if (docTypeFilter !== 'all' && s.docType !== docTypeFilter) return false;
       if (formatFilter !== 'all' && s.exerciseFormat !== formatFilter) return false;
+      if (q) {
+        const hay = `${s.title} ${s.subtitle} ${s.subjectLabel} lớp ${s.grade} ${s.docType} ${s.exerciseFormat} ${s.difficultyLevel}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
       return true;
     });
-  }, [subjectFilter, gradeFilter, docTypeFilter, formatFilter]);
+  }, [subjectFilter, gradeFilter, docTypeFilter, formatFilter, searchQuery]);
 
   const hasActiveFilters =
     subjectFilter !== 'all' ||
     gradeFilter !== 'all' ||
     docTypeFilter !== 'all' ||
-    formatFilter !== 'all';
+    formatFilter !== 'all' ||
+    searchQuery.trim().length > 0;
 
   const resetAllFilters = () => {
     setSubjectFilter('all');
     setGradeFilter('all');
     setDocTypeFilter('all');
     setFormatFilter('all');
+    setSearchQuery('');
+  };
+
+  const getDocTypeStyle = (docType: string) => {
+    if (docType.includes('Đề kiểm tra')) return 'bg-teal-50 text-[#087F70] border-teal-200';
+    if (docType.includes('Bài làm học sinh')) return 'bg-red-50 text-[#B91C1C] border-red-200';
+    if (docType.includes('thí nghiệm')) return 'bg-emerald-50 text-emerald-800 border-emerald-200';
+    if (docType.includes('thực hành')) return 'bg-sky-50 text-sky-800 border-sky-200';
+    if (docType.includes('kỹ năng')) return 'bg-indigo-50 text-indigo-800 border-indigo-200';
+    if (docType.includes('OCR')) return 'bg-amber-50 text-amber-800 border-amber-200';
+    return 'bg-slate-100 text-slate-700 border-slate-200';
   };
 
   useEffect(() => {
@@ -445,65 +464,89 @@ export const WelcomeScreen: React.FC = () => {
             })}
           </div>
 
-          {/* Multi-facet Filter Bar: Grade, Document Type, Exercise Format */}
-          <div className="rounded-xl bg-white border border-slate-200 p-4 flex flex-col md:flex-row md:items-end gap-3">
-            <div className="flex items-center gap-2 text-[#164E63] font-semibold text-[15px] md:pb-2 shrink-0">
-              <Filter className="w-4 h-4 text-[#087F70]" />
-              <span>Lọc tài liệu:</span>
+          {/* Multi-facet Search & Filter Bar: Search, Grade, Document Type, Exercise Format */}
+          <div className="rounded-xl bg-white border border-slate-200 p-4 space-y-3">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Tìm kiếm theo tên bài, chủ đề, dạng bài, môn học, mức độ..."
+                  className="w-full rounded-lg border border-slate-300 bg-white pl-9 pr-9 py-2 text-[15px] text-slate-800 focus:border-[#087F70] outline-none"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-400 hover:text-slate-700 cursor-pointer"
+                    title="Xóa từ khóa"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+              <div className="text-[15px] font-semibold text-slate-600 shrink-0">
+                Hiển thị <span className="text-[#087F70]">{filteredSamples.length}</span> / {SAMPLE_DOCUMENTS.length} tài liệu
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1">
-              <label className="space-y-1">
-                <span className="block text-[14px] font-semibold text-slate-600">Khối lớp</span>
-                <select
-                  value={gradeFilter === 'all' ? 'all' : String(gradeFilter)}
-                  onChange={(e) =>
-                    setGradeFilter(e.target.value === 'all' ? 'all' : (Number(e.target.value) as GradeLevel))
-                  }
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-[15px] text-slate-800 focus:border-[#087F70] outline-none"
-                >
-                  <option value="all">Tất cả khối lớp (10, 11, 12)</option>
-                  <option value="10">Lớp 10</option>
-                  <option value="11">Lớp 11</option>
-                  <option value="12">Lớp 12</option>
-                </select>
-              </label>
+            <div className="flex flex-col md:flex-row md:items-end gap-3 pt-1">
+              <div className="flex items-center gap-2 text-[#164E63] font-semibold text-[15px] md:pb-2 shrink-0">
+                <Filter className="w-4 h-4 text-[#087F70]" />
+                <span>Lọc tài liệu:</span>
+              </div>
 
-              <label className="space-y-1">
-                <span className="block text-[14px] font-semibold text-slate-600">Loại tài liệu</span>
-                <select
-                  value={docTypeFilter}
-                  onChange={(e) => setDocTypeFilter(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-[15px] text-slate-800 focus:border-[#087F70] outline-none"
-                >
-                  <option value="all">Tất cả loại tài liệu</option>
-                  {DOC_TYPE_OPTIONS.map((dt) => (
-                    <option key={dt} value={dt}>
-                      {dt}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1">
+                <label className="space-y-1">
+                  <span className="block text-[15px] font-semibold text-slate-600">Khối lớp</span>
+                  <select
+                    value={gradeFilter === 'all' ? 'all' : String(gradeFilter)}
+                    onChange={(e) =>
+                      setGradeFilter(e.target.value === 'all' ? 'all' : (Number(e.target.value) as GradeLevel))
+                    }
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-[15px] text-slate-800 focus:border-[#087F70] outline-none"
+                  >
+                    <option value="all">Tất cả khối lớp (10, 11, 12)</option>
+                    <option value="10">Lớp 10</option>
+                    <option value="11">Lớp 11</option>
+                    <option value="12">Lớp 12</option>
+                  </select>
+                </label>
 
-              <label className="space-y-1">
-                <span className="block text-[14px] font-semibold text-slate-600">Dạng bài</span>
-                <select
-                  value={formatFilter}
-                  onChange={(e) => setFormatFilter(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-[15px] text-slate-800 focus:border-[#087F70] outline-none"
-                >
-                  <option value="all">Tất cả dạng bài</option>
-                  {availableFormats.map((fmt) => (
-                    <option key={fmt} value={fmt}>
-                      {fmt}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+                <label className="space-y-1">
+                  <span className="block text-[15px] font-semibold text-slate-600">Loại tài liệu</span>
+                  <select
+                    value={docTypeFilter}
+                    onChange={(e) => setDocTypeFilter(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-[15px] text-slate-800 focus:border-[#087F70] outline-none"
+                  >
+                    <option value="all">Tất cả loại tài liệu</option>
+                    {DOC_TYPE_OPTIONS.map((dt) => (
+                      <option key={dt} value={dt}>
+                        {dt}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-            <div className="text-[14.5px] font-semibold text-slate-600 md:pb-2 shrink-0">
-              Hiển thị <span className="text-[#087F70]">{filteredSamples.length}</span> / {SAMPLE_DOCUMENTS.length} tài liệu
+                <label className="space-y-1">
+                  <span className="block text-[15px] font-semibold text-slate-600">Dạng bài</span>
+                  <select
+                    value={formatFilter}
+                    onChange={(e) => setFormatFilter(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-[15px] text-slate-800 focus:border-[#087F70] outline-none"
+                  >
+                    <option value="all">Tất cả dạng bài</option>
+                    {availableFormats.map((fmt) => (
+                      <option key={fmt} value={fmt}>
+                        {fmt}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
             </div>
           </div>
 
@@ -617,12 +660,12 @@ export const WelcomeScreen: React.FC = () => {
                   key={sample.id}
                   className="bg-white rounded-xl border border-slate-200 hover:border-[#087F70] p-4 flex flex-col justify-between gap-3.5 shadow-2xs transition-all"
                 >
-                  <div className="space-y-2">
+                  <div className="space-y-2.5">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <span className="text-[14.5px] font-bold text-[#087F70]">
+                      <span className="text-[15px] font-bold text-[#087F70]">
                         {sample.subjectLabel} · Lớp {sample.grade}
                       </span>
-                      <div className="flex items-center gap-1.5 text-[14px] font-semibold text-slate-600">
+                      <div className="flex items-center gap-1.5 text-[14.5px] font-semibold text-slate-600">
                         {sample.isGradingSample && (
                           <GraduationCap className="w-4 h-4 text-[#DC2626] shrink-0" />
                         )}
@@ -633,17 +676,25 @@ export const WelcomeScreen: React.FC = () => {
                       </div>
                     </div>
 
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span
+                        className={`inline-block px-2.5 py-0.5 rounded-md border text-[14px] font-semibold ${getDocTypeStyle(
+                          sample.docType
+                        )}`}
+                      >
+                        {sample.docType}
+                      </span>
+                      <span className="text-[14px] font-medium text-slate-600">
+                        Mức độ: {sample.difficultyLevel}
+                      </span>
+                    </div>
+
                     <h3 className="text-[16.5px] font-bold text-slate-900 leading-snug">
                       {sample.title}
                     </h3>
 
-                    <div className="text-[14.5px] text-[#164E63] font-medium bg-[#F4F8F7] rounded-lg px-2.5 py-1.5 border border-slate-200/70">
-                      <div>
-                        <span className="text-slate-500">Loại tài liệu:</span> {sample.docType}
-                      </div>
-                      <div>
-                        <span className="text-slate-500">Dạng bài:</span> {sample.exerciseFormat}
-                      </div>
+                    <div className="text-[15px] text-[#164E63] font-medium bg-[#F4F8F7] rounded-lg px-2.5 py-1.5 border border-slate-200/70">
+                      <span className="text-slate-500">Dạng bài:</span> {sample.exerciseFormat}
                     </div>
 
                     <p className="text-[15px] text-slate-600 leading-relaxed">

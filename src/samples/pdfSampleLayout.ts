@@ -8,6 +8,7 @@ export type StructuredPdfBlock =
   | { kind: 'callout'; title: string; text: string; tone?: 'teal' | 'amber' | 'slate' }
   | { kind: 'table'; headers: string[]; rows: string[][]; colWeights?: number[] }
   | { kind: 'writingLines'; count: number; title?: string }
+  | { kind: 'code'; title?: string; lines: string[] }
   | { kind: 'spacer'; height: number }
   | { kind: 'pageBreak' };
 
@@ -405,6 +406,74 @@ export async function createStructuredSamplePdf(
         y -= 20;
       }
       y -= 4;
+      continue;
+    }
+
+    if (block.kind === 'code') {
+      const padX = 12;
+      const innerW = CONTENT_W - padX * 2;
+      const fontSize = 9.0;
+      const lineH = 12.6;
+      const wrappedLines: string[] = [];
+      for (const rawLine of block.lines) {
+        const leadingSpaces = rawLine.match(/^ +/)?.[0] || '';
+        const trimmed = rawLine.slice(leadingSpaces.length);
+        if (!trimmed) {
+          wrappedLines.push('');
+        } else {
+          const chunks = wrapText(trimmed, fonts.sans, fontSize, Math.max(80, innerW - leadingSpaces.length * 4));
+          chunks.forEach((ch, idx) => {
+            wrappedLines.push((idx === 0 ? leadingSpaces : leadingSpaces + '  ') + ch);
+          });
+        }
+      }
+      const titleH = block.title ? 16 : 0;
+      const boxH = titleH + wrappedLines.length * lineH + 14;
+      ensureSpace(boxH + 8);
+
+      const boxBottom = y - boxH + 10;
+      page.drawRectangle({
+        x: MARGIN_X,
+        y: boxBottom,
+        width: CONTENT_W,
+        height: boxH,
+        color: rgb(0.95, 0.97, 0.985),
+        borderColor: rgb(0.72, 0.79, 0.85),
+        borderWidth: 0.9,
+      });
+      page.drawRectangle({
+        x: MARGIN_X,
+        y: boxBottom,
+        width: 3.5,
+        height: boxH,
+        color: rgb(0.09, 0.31, 0.39),
+      });
+
+      let ty = y - 4;
+      if (block.title) {
+        page.drawText(block.title, {
+          x: MARGIN_X + padX,
+          y: ty,
+          size: 9.2,
+          font: fonts.sansBold,
+          color: rgb(0.09, 0.31, 0.39),
+        });
+        ty -= 16;
+      }
+
+      for (const ln of wrappedLines) {
+        if (ln) {
+          page.drawText(ln, {
+            x: MARGIN_X + padX,
+            y: ty,
+            size: fontSize,
+            font: fonts.sans,
+            color: rgb(0.11, 0.16, 0.24),
+          });
+        }
+        ty -= lineH;
+      }
+      y = boxBottom - 10;
     }
   }
 

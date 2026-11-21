@@ -1752,5 +1752,297 @@ export async function generateSocialEngSampleDocument(
     );
   }
 
+  // =========================================================================
+  // ADDITIONAL 2 GEOGRAPHY SAMPLES (sample-geo-09-short, sample-geo-10-essay)
+  // =========================================================================
+  if (sampleId === 'sample-geo-09-short') {
+    const grading = buildMcqSession('Phiếu trả lời ngắn Địa lí 12 – Số liệu giả định', 'Địa lí', '12A1', [
+      { number: 1, kind: 'short', answerKey: '65', maxScore: 2.5 },
+      { number: 2, kind: 'short', answerKey: '18,6', maxScore: 2.5 },
+      { number: 3, kind: 'short', answerKey: '26', maxScore: 2.5 },
+      { number: 4, kind: 'short', answerKey: '125', maxScore: 2.5 },
+    ]);
+    return buildFromSpec(
+      {
+        subjectLabel: 'Địa lí',
+        gradeLabel: 'Lớp 12',
+        docTypeLabel: 'Phiếu bài tập · Trả lời ngắn',
+        title: 'BÀI TẬP TRẢ LỜI NGẮN ĐỊA LÍ 12: TÍNH TOÁN CHỈ TIÊU TỰ NHIÊN & KINH TẾ',
+        subtitle: 'Định dạng THPT 2025  |  Sử dụng Số liệu giả định minh họa kỹ năng tính toán địa lí.',
+        blocks: [
+          {
+            kind: 'callout',
+            title: 'Lưu ý số liệu',
+            text: 'Toàn bộ số liệu trong phiếu dưới đây là Số liệu giả định nhằm rèn luyện kỹ năng tính biên độ nhiệt, năng suất cây trồng, cán cân xuất nhập khẩu và tốc độ tăng trưởng theo định dạng trả lời ngắn.',
+            tone: 'amber',
+          },
+          { kind: 'heading', text: 'Tính và ghi kết quả làm tròn theo yêu cầu của từng câu' },
+          {
+            kind: 'lines',
+            lines: [
+              'Câu 1 (Số liệu giả định). Một vùng sản xuất có diện tích gieo trồng lúa năm 2024 là 400 nghìn ha và sản lượng lúa đạt 2 600 nghìn tấn. Tính năng suất lúa của vùng theo đơn vị tạ/ha (làm tròn đến hàng đơn vị).',
+              '   Đáp số: ________________ tạ/ha',
+              'Câu 2 (Số liệu giả định). Tại một trạm khí tượng vùng núi, nhiệt độ trung bình tháng nóng nhất (tháng 7) là 29,4°C và tháng lạnh nhất (tháng 1) là 10,8°C. Tính biên độ nhiệt độ năm của trạm đó (đơn vị °C, làm tròn 1 chữ số thập phân).',
+              '   Đáp số: ________________ °C',
+              'Câu 3 (Số liệu giả định). Năm 2024, một địa phương có kim ngạch xuất khẩu đạt 148 tỉ USD và kim ngạch nhập khẩu đạt 122 tỉ USD. Tính cán cân xuất nhập khẩu của địa phương đó (đơn vị tỉ USD).',
+              '   Đáp số: ________________ tỉ USD',
+              'Câu 4 (Số liệu giả định). Sản lượng điện của một khu vực tăng từ 200 tỉ kWh (năm gốc 2020 = 100%) lên 250 tỉ kWh (năm 2024). Tính chỉ số tốc độ tăng trưởng sản lượng điện năm 2024 so với năm 2020 (đơn vị %).',
+              '   Đáp số: ________________ %',
+            ],
+          },
+          { kind: 'pageBreak' },
+          { kind: 'heading', text: 'ĐÁP ÁN & CÔNG THỨC KIỂM CHỨNG' },
+          {
+            kind: 'table',
+            headers: ['Câu', 'Đáp số', 'Công thức & Phép tính'],
+            colWeights: [0.9, 1.3, 5.8],
+            rows: [
+              ['Câu 1', '65', '1 tấn = 10 tạ → Năng suất = (2600 × 10) / 400 = 26 000 / 400 = 65 tạ/ha.'],
+              ['Câu 2', '18,6', 'Biên độ nhiệt năm = T_max − T_min = 29,4 − 10,8 = 18,6°C.'],
+              ['Câu 3', '26', 'Cán cân XNK = Xuất khẩu − Nhập khẩu = 148 − 122 = +26 tỉ USD (xuất siêu).'],
+              ['Câu 4', '125', 'Tốc độ tăng trưởng = (250 / 200) × 100% = 125%.'],
+            ],
+          },
+        ],
+      },
+      () => [],
+      grading
+    );
+  }
+
+  if (sampleId === 'sample-geo-10-essay') {
+    const grading = buildRubricSession('Đề tự luận Địa lí 12 – Kinh tế biển & Nông nghiệp', 'Địa lí', '12A2', [
+      { id: 'g10-1', label: 'Câu 1: Tiềm năng và giải pháp kinh tế biển đảo', maxScore: 5.0 },
+      { id: 'g10-2', label: 'Câu 2: Phát triển nông nghiệp xanh, bền vững', maxScore: 5.0 },
+    ]);
+    return buildFromSpec(
+      {
+        subjectLabel: 'Địa lí',
+        gradeLabel: 'Lớp 12',
+        docTypeLabel: 'Đề kiểm tra · Tự luận',
+        title: 'ĐỀ TỰ LUẬN ĐỊA LÍ 12: KINH TẾ BIỂN ĐẢO & NÔNG NGHIỆP BỀN VỮNG',
+        subtitle: 'Thời gian: 45 phút  |  Thang điểm: 10,0  |  Kèm khung chấm tự luận cho giáo viên.',
+        blocks: [
+          { kind: 'heading', text: 'Câu 1 (5,0 điểm). Phát triển tổng hợp kinh tế biển gắn với bảo vệ chủ quyền' },
+          {
+            kind: 'lines',
+            lines: [
+              'a) Trình bày 4 ngành kinh tế biển chủ lực của nước ta (khai thác – nuôi trồng thủy sản, giao thông vận tải biển, du lịch biển đảo, năng lượng và tài nguyên biển).',
+              'b) Giải thích vì sao phát triển kinh tế biển nước ta phải đi đôi với bảo vệ môi trường biển và giữ vững chủ quyền, quyền chủ quyền trên Biển Đông.',
+            ],
+          },
+          { kind: 'heading', text: 'Câu 2 (5,0 điểm). Chuyển đổi sang nông nghiệp xanh và thích ứng biến đổi khí hậu' },
+          {
+            kind: 'lines',
+            lines: [
+              'a) Nêu những thách thức chính của biến đổi khí hậu (xâm nhập mặn, hạn hán, bão lũ cực đoan) đối với sản xuất nông nghiệp ở Đồng bằng sông Cửu Long.',
+              'b) Đề xuất 3 giải pháp thực tiễn nhằm phát triển nông nghiệp sinh thái, nâng cao giá trị gia tăng cho nông sản vùng đồng bằng.',
+            ],
+          },
+          { kind: 'writingLines', title: 'Khung nhận xét của giáo viên:', count: 5 },
+          { kind: 'pageBreak' },
+          { kind: 'heading', text: 'HƯỚNG DẪN CHẤM TỰ LUẬN ĐỊA LÍ 12 (10,0 ĐIỂM)' },
+          {
+            kind: 'table',
+            headers: ['Câu', 'Điểm', 'Yêu cầu nội dung chính'],
+            colWeights: [1.0, 1.0, 6.0],
+            rows: [
+              ['Câu 1', '5,0', 'a) Nêu đúng đặc điểm và vai trò 4 nhóm ngành kinh tế biển chủ lực (3,0đ).\nb) Môi trường biển dễ bị tổn thương (rác thải nhựa, khai thác tận diệt); hệ thống đảo và vùng biển có ý nghĩa chiến lược về quốc phòng – an ninh và tuyến hàng hải quốc tế (2,0đ).'],
+              ['Câu 2', '5,0', 'a) Xâm nhập mặn sâu vào nội đồng mùa khô, sụt lún đất, sạt lở bờ sông/bờ biển, thay đổi chế độ dòng chảy sông Mê Kông (2,5đ).\nb) Chuyển đổi cơ cấu giống chịu mặn/chịu hạn; ứng dụng nông nghiệp thông minh – tưới tiết kiệm; xây dựng chuỗi liên kết chế biến sâu, truy xuất nguồn gốc và bảo vệ rừng ngập mặn ven biển (2,5đ).'],
+            ],
+          },
+        ],
+      },
+      () => [],
+      grading
+    );
+  }
+
+  // =========================================================================
+  // ADDITIONAL 2 HISTORY SAMPLES (sample-his-09-short, sample-his-10-cause-effect)
+  // =========================================================================
+  if (sampleId === 'sample-his-09-short') {
+    const grading = buildMcqSession('Phiếu trả lời ngắn Lịch sử 12 – Mốc sự kiện xác thực', 'Lịch sử', '12A1', [
+      { number: 1, kind: 'short', answerKey: '1945', maxScore: 2.5 },
+      { number: 2, kind: 'short', answerKey: '1954', maxScore: 2.5 },
+      { number: 3, kind: 'short', answerKey: '1975', maxScore: 2.5 },
+      { number: 4, kind: 'short', answerKey: '1986', maxScore: 2.5 },
+    ]);
+    return buildFromSpec(
+      {
+        subjectLabel: 'Lịch sử',
+        gradeLabel: 'Lớp 12',
+        docTypeLabel: 'Phiếu bài tập · Trả lời ngắn',
+        title: 'BÀI TẬP TRẢ LỜI NGẮN LỊCH SỬ 12: CÁC MỐC SỰ KIỆN TRỌNG ĐẠI VIỆT NAM',
+        subtitle: 'Môn Lịch sử lớp 12  |  Xác định chính xác mốc năm và văn kiện lịch sử xác thực.',
+        blocks: [
+          { kind: 'heading', text: 'Điền mốc năm (4 chữ số) tương ứng với mỗi sự kiện lịch sử dưới đây' },
+          {
+            kind: 'lines',
+            lines: [
+              'Câu 1. Chủ tịch Hồ Chí Minh đọc bản Tuyên ngôn Độc lập tại Quảng trường Ba Đình (Hà Nội), khai sinh nước Việt Nam Dân chủ Cộng hòa vào ngày 2 tháng 9 năm nào?',
+              '   Đáp số: Năm ________________',
+              'Câu 2. Chiến thắng lịch sử Điện Biên Phủ ("lừng lẫy năm châu, chấn động địa cầu") kết thúc thắng lợi vào ngày 7 tháng 5 năm nào?',
+              '   Đáp số: Năm ________________',
+              'Câu 3. Chiến dịch Hồ Chí Minh toàn thắng vào ngày 30 tháng 4 năm nào, giải phóng hoàn toàn miền Nam, thống nhất đất nước?',
+              '   Đáp số: Năm ________________',
+              'Câu 4. Đại hội đại biểu toàn quốc lần thứ VI của Đảng Cộng sản Việt Nam đề ra đường lối Đổi mới toàn diện đất nước vào tháng 12 năm nào?',
+              '   Đáp số: Năm ________________',
+            ],
+          },
+          { kind: 'heading', text: 'Phần mở rộng: Nối nhanh sự kiện với ý nghĩa lịch sử' },
+          {
+            kind: 'lines',
+            lines: [
+              'Giáo viên có thể dùng công cụ Vẽ đường nối hoặc Chú thích trực tiếp trên PDF để yêu cầu học sinh trình bày ý nghĩa của từng mốc 1945, 1954, 1975, 1986.',
+            ],
+          },
+          { kind: 'pageBreak' },
+          { kind: 'heading', text: 'ĐÁP ÁN XÁC THỰC' },
+          {
+            kind: 'table',
+            headers: ['Câu', 'Mốc năm', 'Ý nghĩa lịch sử cốt lõi'],
+            colWeights: [0.9, 1.3, 5.8],
+            rows: [
+              ['Câu 1', '1945', 'Mở ra kỉ nguyên độc lập, tự do của dân tộc Việt Nam; nhân dân từ thân phận nô lệ trở thành người làm chủ đất nước.'],
+              ['Câu 2', '1954', 'Đập tan kế hoạch Nava, tạo cơ sở quyết định dẫn tới kí kết Hiệp định Giơ-ne-vơ chấm dứt chiến tranh xâm lược của thực dân Pháp ở Đông Dương.'],
+              ['Câu 3', '1975', 'Kết thúc thắng lợi cuộc kháng chiến chống Mỹ, cứu nước, hoàn thành cách mạng dân tộc dân chủ nhân dân trong cả nước.'],
+              ['Câu 4', '1986', 'Khởi xướng công cuộc Đổi mới, đưa đất nước từng bước thoát khỏi khủng hoảng kinh tế – xã hội và hội nhập quốc tế.'],
+            ],
+          },
+        ],
+      },
+      () => [],
+      grading
+    );
+  }
+
+  if (sampleId === 'sample-his-10-cause-effect') {
+    return buildFromSpec({
+      subjectLabel: 'Lịch sử',
+      gradeLabel: 'Lớp 11',
+      docTypeLabel: 'Phiếu học tập · Nguyên nhân – Kết quả',
+      title: 'PHIẾU PHÂN TÍCH NGUYÊN NHÂN – KẾT QUẢ: CẢI CÁCH & BẢO VỆ TỔ QUỐC',
+      subtitle: 'Môn Lịch sử lớp 11  |  Rèn kỹ năng lập chuỗi nhân – quả trong phân tích sự kiện lịch sử Việt Nam.',
+      blocks: [
+        { kind: 'heading', text: 'Nhiệm vụ 1. Hoàn thiện bảng Nguyên nhân – Diễn biến chính – Kết quả' },
+        {
+          kind: 'table',
+          headers: ['Sự kiện lịch sử', 'Nguyên nhân / Bối cảnh', 'Kết quả & Ý nghĩa lịch sử'],
+          colWeights: [2.2, 2.8, 3.0],
+          rows: [
+            ['Chiến thắng Bạch Đằng năm 938 (Ngô Quyền)', 'Quân Nam Hán kéo sang xâm lược; Ngô Quyền chủ động bày trận địa cọc ngầm trên sông Bạch Đằng.', '______________________________________\n______________________________________'],
+            ['Cuộc cải cách hành chính của vua Lê Thánh Tông (thế kỉ XV)', 'Yêu cầu khắc phục tình trạng phân quyền, quan liêu và tăng cường hiệu lực bộ máy nhà nước quân chủ.', '______________________________________\n______________________________________'],
+            ['Cuộc cải cách của vua Minh Mạng (nửa đầu thế kỉ XIX)', 'Đất nước thống nhất rộng lớn từ Bắc chí Nam, cần thống nhất đơn vị hành chính và luật pháp.', '______________________________________\n______________________________________'],
+          ],
+        },
+        { kind: 'heading', text: 'Nhiệm vụ 2. Câu hỏi liên hệ bài học lịch sử' },
+        {
+          kind: 'lines',
+          lines: [
+            'Từ các cuộc cải cách hành chính thời Lê Thánh Tông và Minh Mạng, hãy rút ra 2 bài học kinh nghiệm có giá trị tham khảo đối với công tác quản lí hành chính và tuyển chọn nhân tài ngày nay.',
+          ],
+        },
+        { kind: 'pageBreak' },
+        { kind: 'heading', text: 'GỢI Ý ĐÁP ÁN PHÂN TÍCH NHÂN – QUẢ' },
+        {
+          kind: 'table',
+          headers: ['Sự kiện', 'Kết quả & Ý nghĩa chính'],
+          colWeights: [2.2, 5.8],
+          rows: [
+            ['Bạch Đằng (938)', 'Đập tan hoàn toàn ý chí xâm lược của quân Nam Hán, chấm dứt hơn 1000 năm Bắc thuộc, mở ra thời kì độc lập tự chủ lâu dài của dân tộc Việt Nam.'],
+            ['Cải cách Lê Thánh Tông', 'Xây dựng bộ máy nhà nước quân chủ trung ương tập quyền hoàn chỉnh (6 bộ, 13 đạo thừa tuyên, Quốc triều hình luật – Luật Hồng Đức), đưa Đại Việt đạt thời kì phát triển thịnh đạt.'],
+            ['Cải cách Minh Mạng', 'Thành lập Nội các, Cơ mật viện, chia cả nước thành 30 tỉnh và 1 phủ Thừa Thiên (1831–1832), đặt nền móng quan trọng cho hệ thống đơn vị hành chính cấp tỉnh hiện đại.'],
+          ],
+        },
+        {
+          kind: 'lines',
+          lines: [
+            'Bài học liên hệ: (1) Tinh gọn bộ máy, phân định rõ chức năng nhiệm vụ và cơ chế giám sát lẫn nhau để hạn chế tham nhũng; (2) Coi trọng khoa cử, tuyển chọn nhân tài dựa trên năng lực thực chất và đạo đức công vụ.',
+          ],
+        },
+      ],
+    });
+  }
+
+  // =========================================================================
+  // ADDITIONAL 1 ENGLISH SAMPLE (sample-eng-12-cloze-reading)
+  // =========================================================================
+  if (sampleId === 'sample-eng-12-cloze-reading') {
+    const grading = buildMcqSession('English 12 Cloze Test & Functional Language', 'Tiếng Anh', '12A1', [
+      { number: 1, kind: 'abcd', answerKey: 'B', maxScore: 1 },
+      { number: 2, kind: 'abcd', answerKey: 'C', maxScore: 1 },
+      { number: 3, kind: 'abcd', answerKey: 'A', maxScore: 1 },
+      { number: 4, kind: 'abcd', answerKey: 'D', maxScore: 1 },
+      { number: 5, kind: 'abcd', answerKey: 'B', maxScore: 1 },
+      { number: 6, kind: 'abcd', answerKey: 'C', maxScore: 1 },
+      { number: 7, kind: 'abcd', answerKey: 'A', maxScore: 1 },
+      { number: 8, kind: 'abcd', answerKey: 'D', maxScore: 1 },
+    ]);
+    return buildFromSpec(
+      {
+        subjectLabel: 'Tiếng Anh',
+        gradeLabel: 'Lớp 12',
+        docTypeLabel: 'Đề kiểm tra · Cloze & Communication',
+        title: 'ENGLISH 12 PRACTICE: GUIDED CLOZE TEST & FUNCTIONAL LANGUAGE',
+        subtitle: 'Grade 12  |  School Leaflet Cloze Passage (5 items) + Real-life Communication & Arrangement (3 items).',
+        blocks: [
+          { kind: 'heading', text: 'Part 1. Read the school notice and choose the best option (A, B, C, or D) for blanks 1–5' },
+          {
+            kind: 'quote',
+            title: 'ANNUAL HIGH-SCHOOL SCIENCE & GREEN INNOVATION FAIR',
+            lines: [
+              'Are you passionate about protecting our planet? Our school is proud to host the Annual Green Innovation Fair next Friday. Students from all grades are encouraged to (1) ________ practical projects ranging from solar-powered chargers to biodegradable packaging. All prototypes must be registered with the Science Department (2) ________ Monday afternoon so that exhibition tables can be arranged properly. Visitors will have the opportunity to vote for the most (3) ________ design. In addition, local engineers will give a short talk on careers in renewable energy, (4) ________ is especially helpful for Grade 12 students choosing university majors. Don\'t miss this chance to turn your creative ideas (5) ________ real-world solutions!',
+            ],
+            source: 'Original instructional leaflet text for Grade 12 English practice.',
+          },
+          {
+            kind: 'lines',
+            lines: [
+              '1. A. make up        B. put forward        C. take off           D. look after',
+              '2. A. during         B. since              C. by                 D. while',
+              '3. A. sustainable    B. sustain            C. sustainably        D. sustainability',
+              '4. A. that           B. who                C. where              D. which',
+              '5. A. from           B. into               C. over               D. under',
+            ],
+          },
+          { kind: 'heading', text: 'Part 2. Functional Language & Dialogue Arrangement (Items 6–8)' },
+          {
+            kind: 'lines',
+            lines: [
+              '6. Minh: "Would you mind showing me how to insert a formula in this worksheet?" — Hoa: "________"',
+              '   A. Yes, I would mind.   B. Never mind at all.   C. Not at all! Let me show you.   D. I\'m afraid so.',
+              '7. Choose the correct order to form a natural exchange:',
+              '   (a) Sure, I\'ll share my notes right after class.   (b) Hi Nam, did you catch the deadline for the essay?',
+              '   (c) Thanks a lot! That really helps.               (d) Yes, it\'s due next Wednesday at 5 p.m.',
+              '   A. b – d – a – c        B. d – b – c – a        C. b – a – d – c                  D. a – b – d – c',
+              '8. Which closing is most appropriate for a formal application email to a scholarship committee?',
+              '   A. See ya soon!         B. Cheers, buddy!       C. Catch you later,               D. Yours sincerely,',
+            ],
+          },
+          { kind: 'pageBreak' },
+          { kind: 'heading', text: 'ANSWER KEY & EXPLANATIONS' },
+          {
+            kind: 'table',
+            headers: ['Item', 'Key', 'Explanation'],
+            colWeights: [0.9, 0.9, 6.2],
+            rows: [
+              ['1', 'B', '"put forward" = propose / present an idea or project.'],
+              ['2', 'C', '"by Monday afternoon" indicates a deadline (no later than).'],
+              ['3', 'A', 'Adjective "sustainable" is needed before the noun "design".'],
+              ['4', 'D', 'Non-defining relative pronoun "which" refers to the whole previous clause.'],
+              ['5', 'B', 'Collocation: "turn A into B" (transform ideas into solutions).'],
+              ['6', 'C', '"Not at all!" politely agrees to a "Would you mind...?" request.'],
+              ['7', 'A', 'Logical flow: Question (b) → Answer (d) → Offer notes (a) → Thanks (c).'],
+              ['8', 'D', '"Yours sincerely," is standard formal email closing.'],
+            ],
+          },
+        ],
+      },
+      () => [],
+      grading
+    );
+  }
+
   return null;
 }

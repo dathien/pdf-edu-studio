@@ -6,6 +6,11 @@ import { getDiagramByKey } from '../engines/geometry/diagramLibrary';
 import { createDefaultGradingSession } from '../engines/grading/gradingEngine';
 import { SAMPLE_DOCUMENTS, type SampleDocDescriptor } from './sampleCatalog';
 import { generateSocialEngSampleDocument } from './sampleDocsSocialEng';
+import { generateMathExtraSample } from './sampleDocsMath';
+import { generatePhysicsExtraSample } from './sampleDocsPhysics';
+import { generateChemistryExtraSample } from './sampleDocsChemistry';
+import { generateBiologyExtraSample } from './sampleDocsBiology';
+import { generateCsExtraSample } from './sampleDocsCs';
 
 export { SAMPLE_DOCUMENTS };
 export type { SampleDocDescriptor };
@@ -187,6 +192,31 @@ async function createScannedOcrSamplePdf(): Promise<Uint8Array> {
 }
 
 export async function generateSampleDocument(sampleId: string): Promise<SampleBuildPayload> {
+  if (sampleId.startsWith('sample-math-')) {
+    const built = await generateMathExtraSample(sampleId);
+    if (built) return built;
+  }
+
+  if (sampleId.startsWith('sample-phys-')) {
+    const built = await generatePhysicsExtraSample(sampleId);
+    if (built) return built;
+  }
+
+  if (sampleId.startsWith('sample-chem-')) {
+    const built = await generateChemistryExtraSample(sampleId);
+    if (built) return built;
+  }
+
+  if (sampleId.startsWith('sample-bio-')) {
+    const built = await generateBiologyExtraSample(sampleId);
+    if (built) return built;
+  }
+
+  if (sampleId.startsWith('sample-cs-')) {
+    const built = await generateCsExtraSample(sampleId);
+    if (built) return built;
+  }
+
   if (
     sampleId.startsWith('sample-geo-') ||
     sampleId.startsWith('sample-his-') ||

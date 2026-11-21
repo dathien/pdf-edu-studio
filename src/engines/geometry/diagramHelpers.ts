@@ -16,7 +16,7 @@ export interface DiagramRenderConfig {
 export interface ScientificDiagramItem {
   key: string;
   title: string;
-  subject: 'math' | 'physics' | 'chemistry' | 'geography' | 'history' | 'english';
+  subject: 'math' | 'physics' | 'chemistry' | 'biology' | 'cs' | 'geography' | 'history' | 'english';
   group: string;
   defaultLabels: Array<{ id: string; text: string }>;
   render: (cfg?: DiagramRenderConfig) => string;
