@@ -1,7 +1,14 @@
-import JSZip from 'jszip';
 import { PDFDocument, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import * as XLSX from 'xlsx';
 import { embedStudioFonts } from '../../engines/pdf/pdfEngine';
+import {
+  PDF_EMBED_NAMES,
+  attachEmbeddedFilesToPdf,
+  readPdfEmbeddedFiles,
+  stripEmbeddedFilesFromPdfBytes,
+  validatePdfHeaderBytes,
+  type PdfEmbeddedEntry,
+} from '../../engines/pdf/pdfEmbeddedData';
 import type {
   GradedSubmissionRecord,
   InteractivePackageIntegrity,
@@ -16,7 +23,7 @@ import type {
   TeacherAnswerKeyMap,
 } from '../../types/interactive';
 
-export const MAX_PDFEDU_BYTES = 50 * 1024 * 1024; // 50 MB
+export const MAX_PDF_PACKAGE_BYTES = 50 * 1024 * 1024; // 50 MB
 export const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // 8 MB per attachment
 export const MAX_ATTACHMENTS_PER_QUESTION = 5;
 
@@ -248,13 +255,15 @@ function uint8ArrayToDataUrl(bytes: Uint8Array, mimeType: string): string {
 }
 
 /**
- * Exports a Student Interactive Worksheet (.pdfedu).
- * STRICT SECURITY: Teacher answer keys are NEVER included.
+ * Exports a Student Interactive Worksheet as a 100% standard PDF (.pdf, application/pdf).
+ * - Visible pages: clean original PDF pages (readable in Zalo, Preview, Chrome, Adobe, Foxit).
+ * - Standard PDF /Names/EmbeddedFiles: sanitized worksheet JSON (ZERO teacher keys!) + clean source + SHA-256.
  */
 export async function exportStudentWorksheetPackage(
   worksheet: InteractiveWorksheet,
   pdfBytes: Uint8Array
 ): Promise<Uint8Array> {
+  const cleanPdfBytes = await stripEmbeddedFilesFromPdfBytes(pdfBytes);
   const safeWorksheet = sanitizeWorksheetForStudent(worksheet);
   const payload = {
     packageKind: 'interactive-worksheet' as const,
@@ -262,29 +271,46 @@ export async function exportStudentWorksheetPackage(
     worksheet: safeWorksheet,
   };
   const jsonBytes = encodeUtf8(JSON.stringify(payload, null, 2));
-  const { algorithm, digest } = await computeIntegrityDigest([pdfBytes, jsonBytes]);
+  const { algorithm, digest } = await computeIntegrityDigest([cleanPdfBytes, jsonBytes]);
   const integrity: InteractivePackageIntegrity = {
     algorithm,
     digest,
     generatedAt: Date.now(),
-    entries: ['source.pdf', 'worksheet.json'],
+    entries: [PDF_EMBED_NAMES.CLEAN_SOURCE_PDF, PDF_EMBED_NAMES.WORKSHEET],
   };
 
-  const zip = new JSZip();
-  zip.file('source.pdf', pdfBytes);
-  zip.file('worksheet.json', jsonBytes);
-  zip.file('integrity.json', JSON.stringify(integrity, null, 2));
-  return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+  return attachEmbeddedFilesToPdf(cleanPdfBytes, [
+    {
+      name: PDF_EMBED_NAMES.CLEAN_SOURCE_PDF,
+      bytes: cleanPdfBytes,
+      mimeType: 'application/pdf',
+      description: 'Clean base PDF pages for PDF EDU STUDIO',
+    },
+    {
+      name: PDF_EMBED_NAMES.WORKSHEET,
+      bytes: jsonBytes,
+      mimeType: 'application/json',
+      description: 'PDF EDU STUDIO interactive worksheet metadata (student-safe)',
+    },
+    {
+      name: PDF_EMBED_NAMES.INTEGRITY,
+      bytes: encodeUtf8(JSON.stringify(integrity, null, 2)),
+      mimeType: 'application/json',
+      description: 'SHA-256 integrity manifest',
+    },
+  ]);
 }
 
 /**
- * Exports a Teacher Master Backup (.pdfedu) containing worksheet + answer keys + source PDF.
+ * Exports a Teacher Master Backup as a 100% standard PDF (.pdf) containing clean PDF pages
+ * plus embedded worksheet structure & teacher answer keys inside /Names/EmbeddedFiles.
  */
 export async function exportTeacherMasterPackage(
   worksheet: InteractiveWorksheet,
   answerKeys: TeacherAnswerKeyMap,
   pdfBytes: Uint8Array
 ): Promise<Uint8Array> {
+  const cleanPdfBytes = await stripEmbeddedFilesFromPdfBytes(pdfBytes);
   const payload = {
     packageKind: 'interactive-teacher-master' as const,
     schemaVersion: 2 as const,
@@ -292,25 +318,45 @@ export async function exportTeacherMasterPackage(
     answerKeys,
   };
   const jsonBytes = encodeUtf8(JSON.stringify(payload, null, 2));
-  const { algorithm, digest } = await computeIntegrityDigest([pdfBytes, jsonBytes]);
+  const { algorithm, digest } = await computeIntegrityDigest([cleanPdfBytes, jsonBytes]);
   const integrity: InteractivePackageIntegrity = {
     algorithm,
     digest,
     generatedAt: Date.now(),
-    entries: ['source.pdf', 'teacher-master.json'],
+    entries: [PDF_EMBED_NAMES.CLEAN_SOURCE_PDF, PDF_EMBED_NAMES.TEACHER_MASTER],
   };
 
-  const zip = new JSZip();
-  zip.file('source.pdf', pdfBytes);
-  zip.file('teacher-master.json', jsonBytes);
-  zip.file('integrity.json', JSON.stringify(integrity, null, 2));
-  return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+  return attachEmbeddedFilesToPdf(cleanPdfBytes, [
+    {
+      name: PDF_EMBED_NAMES.CLEAN_SOURCE_PDF,
+      bytes: cleanPdfBytes,
+      mimeType: 'application/pdf',
+      description: 'Clean base PDF pages for PDF EDU STUDIO',
+    },
+    {
+      name: PDF_EMBED_NAMES.TEACHER_MASTER,
+      bytes: jsonBytes,
+      mimeType: 'application/json',
+      description: 'PDF EDU STUDIO teacher master worksheet and answer keys',
+    },
+    {
+      name: PDF_EMBED_NAMES.INTEGRITY,
+      bytes: encodeUtf8(JSON.stringify(integrity, null, 2)),
+      mimeType: 'application/json',
+      description: 'SHA-256 integrity manifest',
+    },
+  ]);
 }
 
 /**
- * Exports a Student Submission (.pdfedu) containing source PDF, answers, binary attachments,
- * optional visually rendered PDF, and SHA-256 integrity manifest.
- * STRICT SECURITY: Never embeds any trusted score field; strips dataUrl payloads out of JSON into binary ZIP entries.
+ * Exports a Student Saved / Submitted PDF (.pdf, application/pdf):
+ * 1. Visible PDF pages: ALWAYS visually renders all answers, selection marks, matching lines,
+ *    drag-drop cards, fill-in-the-blank values, formulas, handwriting strokes & student info
+ *    so any standard PDF reader (Chrome, Preview, Adobe, Zalo) displays the full completed work.
+ * 2. Standard PDF /Names/EmbeddedFiles: stores clean un-flattened base PDF + structured answers +
+ *    safe binary attachments + SHA-256 integrity so reopening in PDF EDU STUDIO restores all
+ *    interactive controls cleanly for further editing or teacher grading.
+ * STRICT SECURITY: Never embeds any trusted score field; blocks unsafe attachment extensions.
  */
 export async function exportStudentSubmissionPackage(params: {
   worksheet: InteractiveWorksheet;
@@ -324,8 +370,8 @@ export async function exportStudentSubmissionPackage(params: {
   const submissionId =
     params.submissionId || `sub-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
-  const zip = new JSZip();
-  const attachmentEntries: Array<{ path: string; bytes: Uint8Array }> = [];
+  const cleanBasePdf = await stripEmbeddedFilesFromPdfBytes(params.pdfBytes);
+  const attachmentEntries: Array<{ name: string; bytes: Uint8Array; mimeType: string }> = [];
   const sanitizedAnswers: StudentAnswerMap = {};
 
   for (const [qId, ans] of Object.entries(params.answers)) {
@@ -335,15 +381,19 @@ export async function exportStudentSubmissionPackage(params: {
         const check = validateAttachmentFile({ name: att.fileName, size: att.size, type: att.mimeType });
         if (!check.ok) continue;
         const safeName = sanitizeFileName(att.fileName);
-        const entryPath = `attachments/${att.id}_${safeName}`;
+        const embedName = `${PDF_EMBED_NAMES.ATTACHMENT_PREFIX}${att.id}_${safeName}`;
         const rawBytes = dataUrlToUint8Array(att.dataUrl);
-        attachmentEntries.push({ path: entryPath, bytes: rawBytes });
+        attachmentEntries.push({
+          name: embedName,
+          bytes: rawBytes,
+          mimeType: att.mimeType || 'application/octet-stream',
+        });
         cleanAttachments.push({
           id: att.id,
           fileName: safeName,
           mimeType: att.mimeType || 'application/octet-stream',
           size: rawBytes.byteLength,
-          dataUrl: '', // stored in binary entryPath, not bloated in JSON
+          dataUrl: '', // stored in binary embedded file, not bloated in JSON
           addedAt: att.addedAt,
         });
       }
@@ -393,12 +443,50 @@ export async function exportStudentSubmissionPackage(params: {
   const subBytes = encodeUtf8(JSON.stringify(submissionPayload, null, 2));
   const snapBytes = encodeUtf8(JSON.stringify(safeSnapshot, null, 2));
 
-  const digestChunks: Uint8Array[] = [params.pdfBytes, subBytes, snapBytes];
-  const entries = ['source.pdf', 'submission.json', 'worksheet-snapshot.json'];
+  // Render visible PDF pages with all visual answers, marks, connector lines & strokes
+  const visualPdfBytes = await renderInteractiveAnswersToPdf({
+    pdfBytes: cleanBasePdf,
+    worksheet: safeSnapshot,
+    student: submissionPayload.student,
+    answers: params.answers,
+  });
+
+  const digestChunks: Uint8Array[] = [cleanBasePdf, subBytes, snapBytes];
+  const integrityEntries: string[] = [
+    PDF_EMBED_NAMES.CLEAN_SOURCE_PDF,
+    PDF_EMBED_NAMES.SUBMISSION,
+    PDF_EMBED_NAMES.WORKSHEET_SNAPSHOT,
+  ];
+  const embedEntries: PdfEmbeddedEntry[] = [
+    {
+      name: PDF_EMBED_NAMES.CLEAN_SOURCE_PDF,
+      bytes: cleanBasePdf,
+      mimeType: 'application/pdf',
+      description: 'Clean base PDF pages for re-editing in PDF EDU STUDIO',
+    },
+    {
+      name: PDF_EMBED_NAMES.SUBMISSION,
+      bytes: subBytes,
+      mimeType: 'application/json',
+      description: 'PDF EDU STUDIO student interactive submission data',
+    },
+    {
+      name: PDF_EMBED_NAMES.WORKSHEET_SNAPSHOT,
+      bytes: snapBytes,
+      mimeType: 'application/json',
+      description: 'PDF EDU STUDIO student-safe worksheet schema snapshot',
+    },
+  ];
+
   for (const att of attachmentEntries) {
-    zip.file(att.path, att.bytes);
     digestChunks.push(att.bytes);
-    entries.push(att.path);
+    integrityEntries.push(att.name);
+    embedEntries.push({
+      name: att.name,
+      bytes: att.bytes,
+      mimeType: att.mimeType,
+      description: 'Student attachment file',
+    });
   }
 
   const { algorithm, digest } = await computeIntegrityDigest(digestChunks);
@@ -406,30 +494,17 @@ export async function exportStudentSubmissionPackage(params: {
     algorithm,
     digest,
     generatedAt: Date.now(),
-    entries,
+    entries: integrityEntries,
   };
+  embedEntries.push({
+    name: PDF_EMBED_NAMES.INTEGRITY,
+    bytes: encodeUtf8(JSON.stringify(integrity, null, 2)),
+    mimeType: 'application/json',
+    description: 'SHA-256 integrity manifest',
+  });
 
-  zip.file('source.pdf', params.pdfBytes);
-  zip.file('submission.json', subBytes);
-  zip.file('worksheet-snapshot.json', snapBytes);
-  zip.file('integrity.json', JSON.stringify(integrity, null, 2));
-
-  if (params.includeRenderedPdf) {
-    try {
-      const renderedPdf = await renderInteractiveAnswersToPdf({
-        pdfBytes: params.pdfBytes,
-        worksheet: safeSnapshot,
-        student: submissionPayload.student,
-        answers: params.answers,
-      });
-      zip.file('rendered-submission.pdf', renderedPdf);
-    } catch {
-      // Do not block submission export if optional visual PDF rendering fails
-    }
-  }
-
-  const bytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
-  return { bytes, submissionId };
+  const finalPdfBytes = await attachEmbeddedFilesToPdf(visualPdfBytes, embedEntries);
+  return { bytes: finalPdfBytes, submissionId };
 }
 
 export type ParsedInteractivePackage =
@@ -452,123 +527,122 @@ export type ParsedInteractivePackage =
       kind: 'submission';
       submission: StudentSubmissionPayload;
       worksheetSnapshot?: InteractiveWorksheet;
+      /** Clean un-flattened PDF bytes for re-editing or overlay rendering */
       pdfBytes: Uint8Array;
+      /** Full visible PDF bytes as received */
+      visualPdfBytes: Uint8Array;
       integrityValid: boolean;
       warning?: string;
+    }
+  | {
+      kind: 'plain-pdf';
+      pdfBytes: Uint8Array;
+      integrityValid: false;
+      warning: string;
     };
 
-export async function peekPdfEduPackageKind(
+/**
+ * Peeks inside a standard .pdf file's /Names/EmbeddedFiles to classify what kind of
+ * PDF EDU STUDIO data (if any) it carries.
+ */
+export async function peekPdfInteractiveKind(
   input: File | Uint8Array
-): Promise<'studio-project' | 'worksheet' | 'teacher-master' | 'submission' | 'unknown'> {
+): Promise<'studio-project' | 'worksheet' | 'teacher-master' | 'submission' | 'plain-pdf' | 'unknown'> {
   try {
     const bytes = input instanceof Uint8Array ? input : new Uint8Array(await input.arrayBuffer());
-    const zip = await JSZip.loadAsync(bytes);
-    if (zip.file('worksheet.json')) return 'worksheet';
-    if (zip.file('submission.json')) return 'submission';
-    if (zip.file('teacher-master.json')) return 'teacher-master';
-    if (zip.file('project.json')) return 'studio-project';
-    return 'unknown';
+    if (!validatePdfHeaderBytes(bytes)) return 'unknown';
+    const embedded = await readPdfEmbeddedFiles(bytes);
+    if (embedded[PDF_EMBED_NAMES.WORKSHEET]) return 'worksheet';
+    if (embedded[PDF_EMBED_NAMES.SUBMISSION]) return 'submission';
+    if (embedded[PDF_EMBED_NAMES.TEACHER_MASTER]) return 'teacher-master';
+    if (embedded[PDF_EMBED_NAMES.STUDIO_STATE]) return 'studio-project';
+    return 'plain-pdf';
   } catch {
     return 'unknown';
   }
 }
 
-function validatePdfHeader(bytes: Uint8Array): boolean {
-  if (bytes.byteLength < 8) return false;
-  const head = new TextDecoder('ascii').decode(bytes.subarray(0, 16));
-  return head.includes('%PDF-');
-}
-
 /**
- * Strictly validates and parses any interactive .pdfedu package (worksheet, submission, or teacher master).
- * Rejects oversized, corrupt, non-PDF, script-bearing, or tampered archives.
+ * Strictly validates and parses any PDF (.pdf) opened in the interactive worksheet subsystem.
+ * Reads ISO 32000-1 /Names/EmbeddedFiles when present; honestly returns kind='plain-pdf'
+ * when a standard PDF has no embedded interactive metadata (never fabricates recovery).
  */
 export async function parseInteractivePackage(
   input: File | Uint8Array,
-  fileName = 'package.pdfedu'
+  fileName = 'document.pdf'
 ): Promise<ParsedInteractivePackage> {
   const rawBytes = input instanceof Uint8Array ? input : new Uint8Array(await input.arrayBuffer());
   if (rawBytes.byteLength === 0) {
     throw new Error(`Tệp "${fileName}" rỗng hoặc không đọc được.`);
   }
-  if (rawBytes.byteLength > MAX_PDFEDU_BYTES) {
+  if (rawBytes.byteLength > MAX_PDF_PACKAGE_BYTES) {
     throw new Error(
-      `Tệp "${fileName}" vượt quá giới hạn dung lượng cho phép (${Math.round(MAX_PDFEDU_BYTES / (1024 * 1024))} MB).`
+      `Tệp "${fileName}" vượt quá giới hạn dung lượng cho phép (${Math.round(MAX_PDF_PACKAGE_BYTES / (1024 * 1024))} MB).`
     );
   }
+  if (!validatePdfHeaderBytes(rawBytes)) {
+    throw new Error(`Tệp "${fileName}" không phải tài liệu PDF hợp lệ (.pdf).`);
+  }
 
-  let zip: JSZip;
+  let embedded: Record<string, Uint8Array>;
   try {
-    zip = await JSZip.loadAsync(rawBytes);
-  } catch {
-    throw new Error(`Tệp "${fileName}" không phải gói .pdfedu hợp lệ hoặc bị hỏng cấu trúc nén.`);
-  }
-
-  // Reject any executable/script entries anywhere inside the archive
-  for (const path of Object.keys(zip.files)) {
-    const entry = zip.files[path];
-    if (entry.dir) continue;
-    if (path.includes('..') || path.startsWith('/')) {
-      throw new Error(`Tệp "${fileName}" chứa đường dẫn không an toàn: ${path}`);
+    embedded = await readPdfEmbeddedFiles(rawBytes);
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('không an toàn')) {
+      throw err;
     }
-    const ext = (path.split('.').pop() || '').toLowerCase();
-    if (BLOCKED_EXTENSIONS.has(ext)) {
-      throw new Error(`Tệp "${fileName}" chứa thành phần mã kịch bản/thực thi không được phép (.${ext}).`);
-    }
-  }
-
-  const pdfFile = zip.file('source.pdf');
-  if (!pdfFile) {
-    throw new Error(`Tệp "${fileName}" thiếu tài liệu PDF gốc (source.pdf).`);
-  }
-  const pdfBytes = await pdfFile.async('uint8array');
-  if (!validatePdfHeader(pdfBytes)) {
-    throw new Error(`Tài liệu source.pdf bên trong "${fileName}" không đúng định dạng PDF.`);
+    throw new Error(`Không thể đọc cấu trúc tệp PDF "${fileName}" (tệp có thể bị hỏng).`);
   }
 
   let integrityManifest: InteractivePackageIntegrity | null = null;
-  const intFile = zip.file('integrity.json');
-  if (intFile) {
+  const intBytes = embedded[PDF_EMBED_NAMES.INTEGRITY];
+  if (intBytes) {
     try {
-      integrityManifest = JSON.parse(await intFile.async('string')) as InteractivePackageIntegrity;
+      integrityManifest = JSON.parse(new TextDecoder().decode(intBytes)) as InteractivePackageIntegrity;
     } catch {
-      throw new Error(`Tệp "${fileName}" có tệp kiểm tra toàn vẹn (integrity.json) bị lỗi.`);
+      throw new Error(`Tệp PDF "${fileName}" có mã kiểm tra toàn vẹn bị lỗi.`);
     }
   }
 
-  // Case 1: Student Interactive Worksheet
-  const wsFile = zip.file('worksheet.json');
-  if (wsFile) {
-    const wsBytes = await wsFile.async('uint8array');
+  const embeddedCleanPdf = embedded[PDF_EMBED_NAMES.CLEAN_SOURCE_PDF];
+  const basePdfBytes =
+    embeddedCleanPdf && validatePdfHeaderBytes(embeddedCleanPdf)
+      ? embeddedCleanPdf
+      : await stripEmbeddedFilesFromPdfBytes(rawBytes);
+
+  // Case 1: Student Interactive Worksheet PDF
+  const wsBytes = embedded[PDF_EMBED_NAMES.WORKSHEET];
+  if (wsBytes) {
     let parsed: { packageKind?: string; worksheet?: InteractiveWorksheet };
     try {
       parsed = JSON.parse(new TextDecoder().decode(wsBytes));
     } catch {
-      throw new Error(`Dữ liệu bài tập trong "${fileName}" không phải JSON hợp lệ.`);
+      throw new Error(`Dữ liệu bài tập nhúng trong "${fileName}" không phải JSON hợp lệ.`);
     }
     if (parsed.packageKind !== 'interactive-worksheet' || !parsed.worksheet?.worksheetId) {
-      throw new Error(`Tệp "${fileName}" không đúng cấu trúc gói bài tập tương tác.`);
+      throw new Error(`Tệp PDF "${fileName}" có dữ liệu bài tập không đúng cấu trúc.`);
     }
     let integrityValid = true;
     if (integrityManifest) {
-      const computed = await computeIntegrityDigest([pdfBytes, wsBytes]);
+      const computed = await computeIntegrityDigest([basePdfBytes, wsBytes]);
       if (computed.algorithm === integrityManifest.algorithm && computed.digest !== integrityManifest.digest) {
-        throw new Error(`Tệp "${fileName}" không khớp mã toàn vẹn dữ liệu (có thể bị hỏng hoặc chỉnh sửa trái phép).`);
+        throw new Error(
+          `Tệp PDF "${fileName}" không khớp mã toàn vẹn dữ liệu (có thể bị hỏng hoặc chỉnh sửa trái phép).`
+        );
       }
       integrityValid = computed.digest === integrityManifest.digest;
     }
     return {
       kind: 'worksheet',
       worksheet: sanitizeWorksheetForStudent(parsed.worksheet),
-      pdfBytes,
+      pdfBytes: basePdfBytes,
       integrityValid,
     };
   }
 
-  // Case 2: Teacher Master Package
-  const masterFile = zip.file('teacher-master.json');
-  if (masterFile) {
-    const mBytes = await masterFile.async('uint8array');
+  // Case 2: Teacher Master PDF
+  const mBytes = embedded[PDF_EMBED_NAMES.TEACHER_MASTER];
+  if (mBytes) {
     let parsed: {
       packageKind?: string;
       worksheet?: InteractiveWorksheet;
@@ -577,14 +651,14 @@ export async function parseInteractivePackage(
     try {
       parsed = JSON.parse(new TextDecoder().decode(mBytes));
     } catch {
-      throw new Error(`Dữ liệu bản gốc giáo viên trong "${fileName}" bị lỗi.`);
+      throw new Error(`Dữ liệu bản gốc giáo viên nhúng trong "${fileName}" bị lỗi.`);
     }
     if (parsed.packageKind !== 'interactive-teacher-master' || !parsed.worksheet?.worksheetId) {
-      throw new Error(`Tệp "${fileName}" không đúng cấu trúc bản gốc giáo viên.`);
+      throw new Error(`Tệp PDF "${fileName}" không đúng cấu trúc bản gốc giáo viên.`);
     }
     let integrityValid = true;
     if (integrityManifest) {
-      const computed = await computeIntegrityDigest([pdfBytes, mBytes]);
+      const computed = await computeIntegrityDigest([basePdfBytes, mBytes]);
       if (computed.algorithm === integrityManifest.algorithm && computed.digest !== integrityManifest.digest) {
         throw new Error(`Bản gốc giáo viên "${fileName}" không khớp mã toàn vẹn dữ liệu.`);
       }
@@ -594,20 +668,19 @@ export async function parseInteractivePackage(
       kind: 'teacher-master',
       worksheet: parsed.worksheet,
       answerKeys: parsed.answerKeys || {},
-      pdfBytes,
+      pdfBytes: basePdfBytes,
       integrityValid,
     };
   }
 
-  // Case 3: Student Submission Package
-  const subFile = zip.file('submission.json');
-  if (subFile) {
-    const subBytes = await subFile.async('uint8array');
+  // Case 3: Student Saved / Submitted Interactive PDF
+  const subBytes = embedded[PDF_EMBED_NAMES.SUBMISSION];
+  if (subBytes) {
     let parsedSub: StudentSubmissionPayload;
     try {
       parsedSub = JSON.parse(new TextDecoder().decode(subBytes)) as StudentSubmissionPayload;
     } catch {
-      throw new Error(`Dữ liệu bài nộp trong "${fileName}" không phải JSON hợp lệ.`);
+      throw new Error(`Dữ liệu bài làm nhúng trong "${fileName}" không phải JSON hợp lệ.`);
     }
     if (
       parsedSub.packageKind !== 'interactive-submission' ||
@@ -615,11 +688,10 @@ export async function parseInteractivePackage(
       !parsedSub.worksheetId ||
       typeof parsedSub.answers !== 'object'
     ) {
-      throw new Error(`Tệp "${fileName}" không phải gói bài làm học sinh hợp lệ.`);
+      throw new Error(`Tệp PDF "${fileName}" có dữ liệu bài làm học sinh không hợp lệ.`);
     }
 
-    const snapFile = zip.file('worksheet-snapshot.json');
-    const snapBytes = snapFile ? await snapFile.async('uint8array') : null;
+    const snapBytes = embedded[PDF_EMBED_NAMES.WORKSHEET_SNAPSHOT] || null;
     let worksheetSnapshot: InteractiveWorksheet | undefined;
     if (snapBytes) {
       try {
@@ -631,22 +703,20 @@ export async function parseInteractivePackage(
       }
     }
 
-    // Rehydrate attachment binary files & verify integrity chunks
-    const digestChunks: Uint8Array[] = [pdfBytes, subBytes];
+    const digestChunks: Uint8Array[] = [basePdfBytes, subBytes];
     if (snapBytes) digestChunks.push(snapBytes);
 
     const cleanAnswers: StudentAnswerMap = {};
     for (const [qId, rawAns] of Object.entries(parsedSub.answers || {})) {
       if (!rawAns || typeof rawAns !== 'object') continue;
-      // Explicitly pick ONLY allowed student answer fields (NEVER trust any injected score/points fields)
+      // Pick ONLY allowed student answer fields (NEVER trust any injected score fields)
       const rehydratedAttachments: StudentAttachmentMeta[] = [];
       if (Array.isArray(rawAns.attachments)) {
         for (const att of rawAns.attachments.slice(0, MAX_ATTACHMENTS_PER_QUESTION)) {
           const safeName = sanitizeFileName(String(att.fileName || 'file'));
-          const entryPath = `attachments/${att.id}_${safeName}`;
-          const zf = zip.file(entryPath);
-          if (!zf) continue;
-          const attBytes = await zf.async('uint8array');
+          const embedName = `${PDF_EMBED_NAMES.ATTACHMENT_PREFIX}${att.id}_${safeName}`;
+          const attBytes = embedded[embedName];
+          if (!attBytes) continue;
           const check = validateAttachmentFile({
             name: safeName,
             size: attBytes.byteLength,
@@ -705,7 +775,7 @@ export async function parseInteractivePackage(
       const computed = await computeIntegrityDigest(digestChunks);
       if (computed.algorithm === integrityManifest.algorithm && computed.digest !== integrityManifest.digest) {
         throw new Error(
-          `Bài nộp "${fileName}" không khớp mã toàn vẹn (tệp có thể bị chỉnh sửa thủ công hoặc lỗi truyền tải).`
+          `Bài nộp PDF "${fileName}" không khớp mã toàn vẹn (dữ liệu nhúng có thể đã bị sửa hoặc lỗi truyền tải).`
         );
       }
       integrityValid = computed.digest === integrityManifest.digest;
@@ -729,23 +799,29 @@ export async function parseInteractivePackage(
         answers: cleanAnswers,
       },
       worksheetSnapshot,
-      pdfBytes,
+      pdfBytes: basePdfBytes,
+      visualPdfBytes: rawBytes,
       integrityValid,
     };
   }
 
-  throw new Error(
-    `Tệp "${fileName}" không chứa dữ liệu bài tập tương tác (worksheet.json / submission.json).`
-  );
+  // Case 4: Standard plain PDF without PDF EDU STUDIO embedded interactive metadata
+  return {
+    kind: 'plain-pdf',
+    pdfBytes: rawBytes,
+    integrityValid: false,
+    warning:
+      `Tệp "${fileName}" là PDF thông thường (không có dữ liệu tương tác nhúng hoặc dữ liệu nhúng đã bị công cụ ngoài lược bỏ). Không thể tự động khôi phục các vùng câu hỏi tương tác.`,
+  };
 }
 
 /**
- * Safely fetches an online .pdfedu interactive worksheet from a valid HTTPS or same-origin URL.
+ * Safely fetches an online .pdf interactive worksheet from a valid HTTPS or same-origin URL.
  */
 export async function fetchWorksheetFromUrl(rawUrl: string): Promise<ParsedInteractivePackage> {
   const trimmed = rawUrl.trim();
   if (!trimmed) {
-    throw new Error('Vui lòng nhập đường dẫn tệp bài tập (.pdfedu).');
+    throw new Error('Vui lòng nhập đường dẫn tệp bài tập PDF (.pdf).');
   }
   let parsedUrl: URL;
   try {
@@ -764,13 +840,13 @@ export async function fetchWorksheetFromUrl(rawUrl: string): Promise<ParsedInter
   try {
     const resp = await fetch(parsedUrl.toString(), { signal: controller.signal });
     if (!resp.ok) {
-      throw new Error(`Không thể tải tệp bài tập (mã HTTP ${resp.status}).`);
+      throw new Error(`Không thể tải tệp bài tập PDF (mã HTTP ${resp.status}).`);
     }
     const buf = new Uint8Array(await resp.arrayBuffer());
-    return await parseInteractivePackage(buf, parsedUrl.pathname.split('/').pop() || 'online.pdfedu');
+    return await parseInteractivePackage(buf, parsedUrl.pathname.split('/').pop() || 'bai_tap.pdf');
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Quá thời gian tải tệp bài tập từ liên kết trực tuyến.');
+      throw new Error('Quá thời gian tải tệp bài tập PDF từ liên kết trực tuyến.');
     }
     throw err;
   } finally {
@@ -804,7 +880,7 @@ export function getOnlineBackendConfig(): {
 }
 
 /**
- * Builds a real, functional shareable link to open a hosted .pdfedu package directly inside PDF EDU STUDIO.
+ * Builds a real, functional shareable link to open a hosted interactive .pdf worksheet directly inside PDF EDU STUDIO.
  * Rejects non-HTTPS external URLs and refuses to generate fake links without an actual hosted URL.
  */
 export function buildShareableWorksheetLink(
@@ -813,7 +889,7 @@ export function buildShareableWorksheetLink(
 ): string {
   const trimmed = hostedPackageUrl.trim();
   if (!trimmed) {
-    throw new Error('Cần cung cấp đường dẫn HTTPS (hoặc cùng tên miền) trỏ tới tệp .pdfedu thật để tạo liên kết chia sẻ.');
+    throw new Error('Cần cung cấp đường dẫn HTTPS (hoặc cùng tên miền) trỏ tới tệp bài tập .pdf thật để tạo liên kết chia sẻ.');
   }
   const baseOrigin =
     typeof window !== 'undefined' ? window.location.origin : 'https://localhost';
@@ -1337,19 +1413,63 @@ export async function renderInteractiveAnswersToPdf(params: {
 
     // Type-specific visual rendering
     if (q.type === 'mcq') {
-      const selected = q.mcqOptions?.find((o) => o.id === ans?.mcqSelectedId);
-      const txt = selected
-        ? `HS chọn: ${selected.label}. ${selected.text}`
-        : 'HS chưa chọn đáp án.';
-      drawSafeLine(page, fonts.sansBold, txt.slice(0, 72), rx + 8, bodyTop - 6, 9, rgb(0.03, 0.45, 0.39));
+      let curY = bodyTop - 2;
+      const opts = q.mcqOptions || [];
+      if (opts.length > 0) {
+        for (const opt of opts) {
+          if (curY < bottomY + 10) break;
+          const isSel = ans?.mcqSelectedId === opt.id;
+          page.drawCircle({
+            x: rx + 13,
+            y: curY + 3,
+            size: 4.2,
+            color: isSel ? rgb(0.03, 0.5, 0.44) : rgb(1, 1, 1),
+            borderColor: isSel ? rgb(0.03, 0.5, 0.44) : rgb(0.45, 0.52, 0.6),
+            borderWidth: 0.9,
+          });
+          drawSafeLine(
+            page,
+            isSel ? fonts.sansBold : fonts.sans,
+            `${opt.label}. ${opt.text}${isSel ? '  [ĐÃ CHỌN]' : ''}`.slice(0, 68),
+            rx + 22,
+            curY,
+            8.2,
+            isSel ? rgb(0.03, 0.42, 0.36) : rgb(0.25, 0.3, 0.36)
+          );
+          curY -= 14;
+        }
+      } else {
+        drawSafeLine(page, fonts.sans, 'HS chưa chọn đáp án.', rx + 8, bodyTop - 6, 8.5, rgb(0.45, 0.5, 0.56));
+      }
     } else if (q.type === 'mcq_multi') {
       const selIds = new Set(ans?.mcqMultiSelectedIds || []);
-      const chosen = (q.mcqOptions || [])
-        .filter((o) => selIds.has(o.id))
-        .map((o) => `${o.label}. ${o.text}`)
-        .join(' | ');
-      const txt = chosen ? `HS chọn nhiều đáp án: ${chosen}` : 'HS chưa chọn phương án nào.';
-      drawSafeLine(page, fonts.sansBold, txt.slice(0, 76), rx + 8, bodyTop - 6, 8.8, rgb(0.03, 0.45, 0.39));
+      let curY = bodyTop - 2;
+      for (const opt of q.mcqOptions || []) {
+        if (curY < bottomY + 10) break;
+        const isSel = selIds.has(opt.id);
+        page.drawRectangle({
+          x: rx + 9,
+          y: curY - 1,
+          width: 8.5,
+          height: 8.5,
+          color: isSel ? rgb(0.03, 0.5, 0.44) : rgb(1, 1, 1),
+          borderColor: isSel ? rgb(0.03, 0.5, 0.44) : rgb(0.45, 0.52, 0.6),
+          borderWidth: 0.9,
+        });
+        if (isSel) {
+          drawSafeLine(page, fonts.sansBold, 'X', rx + 10.6, curY + 0.5, 7, rgb(1, 1, 1));
+        }
+        drawSafeLine(
+          page,
+          isSel ? fonts.sansBold : fonts.sans,
+          `${opt.label}. ${opt.text}`.slice(0, 68),
+          rx + 22,
+          curY,
+          8.2,
+          isSel ? rgb(0.03, 0.42, 0.36) : rgb(0.25, 0.3, 0.36)
+        );
+        curY -= 14;
+      }
     } else if (q.type === 'tf') {
       let curY = bodyTop - 2;
       for (const st of q.tfStatements || []) {

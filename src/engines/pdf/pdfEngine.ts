@@ -16,7 +16,12 @@ import {
   LineCapStyle,
 } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
-import JSZip from 'jszip';
+import {
+  PDF_EMBED_NAMES,
+  attachEmbeddedFilesToPdf,
+  readPdfEmbeddedFiles,
+  validatePdfHeaderBytes,
+} from './pdfEmbeddedData';
 import type {
   ExtractedTextBlock,
   PageAnalysis,
@@ -1328,16 +1333,24 @@ export async function exportPagesToImages(
   return results;
 }
 
-/** Save editable project bundle (.pdfedu) containing source PDF + full structured studio JSON */
-export async function saveProjectBundle(doc: StudioDocument): Promise<Blob> {
-  const zip = new JSZip();
-  zip.file('source.pdf', doc.currentPdfBytes);
+/**
+ * Save a standard .pdf file that BOTH renders all visual edits (text, vector formulas, diagrams,
+ * grading stamps/scores) in every normal PDF viewer AND embeds structured Studio state via
+ * standard ISO 32000-1 /Names/EmbeddedFiles so PDF EDU STUDIO can reopen and re-edit objects cleanly.
+ */
+export async function saveEditableStudioPdf(doc: StudioDocument): Promise<Uint8Array> {
+  const exported = await exportDocumentToPdf(doc, {
+    includeAnnotations: true,
+    applyRedactions: false,
+    sanitizeMetadata: false,
+  });
+
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     app: 'PDF EDU STUDIO',
     savedAt: new Date().toISOString(),
     title: doc.title,
-    fileName: doc.fileName,
+    fileName: doc.fileName.toLowerCase().endsWith('.pdf') ? doc.fileName : `${doc.fileName}.pdf`,
     subjectHint: doc.subjectHint,
     pages: doc.pages,
     objects: doc.objects,
@@ -1345,12 +1358,31 @@ export async function saveProjectBundle(doc: StudioDocument): Promise<Blob> {
     watermark: doc.watermark,
     pageNumbers: doc.pageNumbers,
   };
-  zip.file('project.json', JSON.stringify(manifest, null, 2));
-  return zip.generateAsync({ type: 'blob' });
+
+  return attachEmbeddedFilesToPdf(exported.bytes, [
+    {
+      name: PDF_EMBED_NAMES.CLEAN_SOURCE_PDF,
+      bytes: doc.currentPdfBytes,
+      mimeType: 'application/pdf',
+      description: 'PDF EDU STUDIO clean base document for re-editing',
+    },
+    {
+      name: PDF_EMBED_NAMES.STUDIO_STATE,
+      bytes: new TextEncoder().encode(JSON.stringify(manifest)),
+      mimeType: 'application/json',
+      description: 'PDF EDU STUDIO editable objects and grading state',
+    },
+  ]);
 }
 
-/** Load an existing .pdfedu project bundle cleanly with schema migration guard */
-export async function loadProjectBundle(file: File): Promise<{
+/**
+ * Attempt to restore structured PDF EDU STUDIO state from a standard .pdf file.
+ * Returns null honestly if the PDF is a plain PDF without embedded Studio state.
+ */
+export async function loadEditableStudioPdf(
+  pdfBytes: Uint8Array,
+  fallbackFileName = 'tai_lieu.pdf'
+): Promise<{
   title: string;
   fileName: string;
   pdfBytes: Uint8Array;
@@ -1360,26 +1392,32 @@ export async function loadProjectBundle(file: File): Promise<{
   watermark: StudioDocument['watermark'];
   pageNumbers: StudioDocument['pageNumbers'];
   subjectHint: StudioDocument['subjectHint'];
-}> {
-  const zip = await JSZip.loadAsync(file);
-  const pdfEntry = zip.file('source.pdf');
-  const jsonEntry = zip.file('project.json');
-  if (!pdfEntry || !jsonEntry) {
-    throw new Error('Tệp dự án .pdfedu không hợp lệ hoặc thiếu dữ liệu nguồn.');
+} | null> {
+  if (!validatePdfHeaderBytes(pdfBytes)) return null;
+  const embedded = await readPdfEmbeddedFiles(pdfBytes);
+  const stateBytes = embedded[PDF_EMBED_NAMES.STUDIO_STATE];
+  if (!stateBytes) return null;
+
+  try {
+    const data = JSON.parse(new TextDecoder().decode(stateBytes));
+    const cleanBaseBytes = embedded[PDF_EMBED_NAMES.CLEAN_SOURCE_PDF];
+    const restoredBasePdf =
+      cleanBaseBytes && validatePdfHeaderBytes(cleanBaseBytes) ? cleanBaseBytes : pdfBytes;
+
+    return {
+      title: String(data.title || fallbackFileName.replace(/\.pdf$/i, '')),
+      fileName: String(data.fileName || fallbackFileName),
+      pdfBytes: restoredBasePdf,
+      pages: Array.isArray(data.pages) ? data.pages : [],
+      objects: Array.isArray(data.objects) ? data.objects : [],
+      grading: data.grading,
+      watermark: data.watermark,
+      pageNumbers: data.pageNumbers,
+      subjectHint: data.subjectHint || 'general',
+    };
+  } catch {
+    return null;
   }
-  const pdfBytes = await pdfEntry.async('uint8array');
-  const data = JSON.parse(await jsonEntry.async('string'));
-  return {
-    title: data.title || file.name.replace(/\.pdfedu$/i, ''),
-    fileName: data.fileName || `${data.title || 'du_an'}.pdf`,
-    pdfBytes,
-    pages: data.pages || [],
-    objects: data.objects || [],
-    grading: data.grading,
-    watermark: data.watermark,
-    pageNumbers: data.pageNumbers,
-    subjectHint: data.subjectHint || 'general',
-  };
 }
 
 export function triggerDownload(blob: Blob, fileName: string): void {

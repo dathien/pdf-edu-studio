@@ -52,7 +52,7 @@ export const AssignmentManagerPanel: React.FC<AssignmentManagerPanelProps> = ({
   );
   const [className, setClassName] = useState('11A1');
   const [instructions, setInstructions] = useState(
-    'Hoàn thành tất cả các câu hỏi trực tiếp trên tài liệu PDF, lưu bài thường xuyên và xuất tệp .pdfedu nộp lại cho giáo viên.'
+    'Hoàn thành tất cả các câu hỏi trực tiếp trên tài liệu PDF, lưu bài thường xuyên và lưu thành tệp PDF nộp lại cho giáo viên qua Zalo hoặc Email.'
   );
   const [startTime, setStartTime] = useState('');
   const [dueDate, setDueDate] = useState('');
@@ -94,7 +94,7 @@ export const AssignmentManagerPanel: React.FC<AssignmentManagerPanelProps> = ({
       const safeName = updatedWs.title
         .replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF_-]+/g, '_')
         .slice(0, 52);
-      triggerInteractiveDownload(bytes, `${code}_${safeName}_HS.pdfedu`, 'application/octet-stream');
+      triggerInteractiveDownload(bytes, `${code}_${safeName}_BaiTap.pdf`, 'application/pdf');
 
       const rec: AssignmentRecord = {
         assignmentId: `asg-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
@@ -115,7 +115,7 @@ export const AssignmentManagerPanel: React.FC<AssignmentManagerPanelProps> = ({
       await interactiveStorage.saveAssignment(rec);
       await onRefresh();
       onNotify(
-        `Đã xuất gói bài tập Offline (${code}) không chứa đáp án giáo viên và lưu vào danh sách bài đã giao.`,
+        `Đã xuất tệp PDF bài tập (${code}) không chứa đáp án giáo viên và lưu vào danh sách bài đã giao.`,
         'success'
       );
     } catch (err) {
@@ -131,7 +131,7 @@ export const AssignmentManagerPanel: React.FC<AssignmentManagerPanelProps> = ({
     const trimmedUrl = hostedPackageUrl.trim();
     if (!trimmedUrl) {
       onNotify(
-        'Cần nhập đường dẫn HTTPS thật tới tệp .pdfedu đã tải lên máy chủ/lưu trữ để tạo liên kết truy cập hợp lệ.',
+        'Cần nhập đường dẫn HTTPS thật tới tệp bài tập .pdf đã tải lên máy chủ/lưu trữ để tạo liên kết truy cập hợp lệ.',
         'warning'
       );
       return;
@@ -162,9 +162,9 @@ export const AssignmentManagerPanel: React.FC<AssignmentManagerPanelProps> = ({
       };
       await interactiveStorage.saveAssignment(rec);
       await onRefresh();
-      onNotify(`Đã tạo liên kết bài tập hợp lệ (${code}) trỏ tới tệp .pdfedu đã cấu hình.`, 'success');
+      onNotify(`Đã tạo liên kết bài tập hợp lệ (${code}) trỏ tới tệp PDF đã cấu hình.`, 'success');
     } catch (err) {
-      onNotify(err instanceof Error ? err.message : 'Đường dẫn tệp .pdfedu không hợp lệ.', 'error');
+      onNotify(err instanceof Error ? err.message : 'Đường dẫn tệp bài tập PDF không hợp lệ.', 'error');
     }
   };
 
@@ -305,10 +305,10 @@ export const AssignmentManagerPanel: React.FC<AssignmentManagerPanelProps> = ({
                 <div className="rounded-xl bg-[#F4F8F7] border border-teal-200 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div className="space-y-1 text-[15px] text-slate-700">
                     <div className="font-bold text-[#164E63]">
-                      Xuất gói bài tập Offline (.pdfedu) — Không cần máy chủ
+                      Xuất tệp bài tập PDF (.pdf) — Gửi Zalo / Email, không cần máy chủ
                     </div>
                     <p>
-                      Gói xuất ra chứa PDF gốc, vùng tương tác, điểm tối đa, hướng dẫn và mã toàn vẹn SHA-256 — <strong>tuyệt đối không chứa đáp án giáo viên</strong>. Thầy/cô gửi tệp qua Zalo, Email, LMS hoặc USB.
+                      Tệp PDF chuẩn chứa đề bài, vùng tương tác nhúng, điểm tối đa, hướng dẫn và mã toàn vẹn SHA-256 — <strong>tuyệt đối không chứa đáp án giáo viên</strong>. Thầy/cô gửi tệp PDF qua Zalo (dạng gửi tệp), Email, LMS hoặc USB.
                     </p>
                   </div>
                   <button
@@ -317,7 +317,7 @@ export const AssignmentManagerPanel: React.FC<AssignmentManagerPanelProps> = ({
                     className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-[#087F70] hover:bg-[#06695d] text-white font-semibold text-[15px] cursor-pointer shrink-0"
                   >
                     <Download className="w-4 h-4" />
-                    <span>Xuất gói .pdfedu & Lưu lịch giao</span>
+                    <span>Xuất PDF bài tập & Lưu lịch giao</span>
                   </button>
                 </div>
               ) : (
@@ -334,7 +334,7 @@ export const AssignmentManagerPanel: React.FC<AssignmentManagerPanelProps> = ({
                         </span>
                       </div>
                       <p className="text-slate-600">
-                        Ứng dụng <strong>không tạo liên kết giả</strong>. Để giao Online, thầy/cô xuất tệp <strong>.pdfedu</strong> (ở chế độ Offline) lên nơi lưu trữ HTTPS hợp lệ (máy chủ trường, thư mục tĩnh hoặc liên kết tải trực tiếp hỗ trợ CORS), sau đó dán đường dẫn thật vào ô dưới để tạo liên kết mở thẳng bài tập cho học sinh. Khi học sinh làm xong sẽ xuất tệp <strong>.pdfedu</strong> gửi lại giáo viên thu bài.
+                        Ứng dụng <strong>không tạo liên kết giả</strong>. Để giao Online, thầy/cô xuất tệp bài tập <strong>.pdf</strong> (ở chế độ Offline) lên nơi lưu trữ HTTPS hợp lệ (máy chủ trường, thư mục tĩnh hoặc liên kết tải trực tiếp hỗ trợ CORS), sau đó dán đường dẫn thật vào ô dưới để tạo liên kết mở thẳng bài tập cho học sinh. Khi học sinh làm xong sẽ lưu thành tệp <strong>.pdf</strong> gửi lại giáo viên thu bài.
                       </p>
                     </div>
                   </div>
@@ -344,7 +344,7 @@ export const AssignmentManagerPanel: React.FC<AssignmentManagerPanelProps> = ({
                       type="url"
                       value={hostedPackageUrl}
                       onChange={(e) => setHostedPackageUrl(e.target.value)}
-                      placeholder="Dán đường dẫn HTTPS thật tới tệp bài tập (.pdfedu), VD: https://school.edu.vn/bt/toan12.pdfedu"
+                      placeholder="Dán đường dẫn HTTPS thật tới tệp bài tập (.pdf), VD: https://school.edu.vn/bt/toan12.pdf"
                       className="flex-1 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-[15px]"
                     />
                     <button
@@ -450,7 +450,7 @@ export const AssignmentManagerPanel: React.FC<AssignmentManagerPanelProps> = ({
                                 : 'bg-teal-50 text-[#087F70] border border-teal-200'
                             }`}
                           >
-                            {asg.deliveryMode === 'online_link' ? 'Online (Liên kết)' : 'Offline (.pdfedu)'}
+                            {asg.deliveryMode === 'online_link' ? 'Online (Liên kết)' : 'Offline (.pdf)'}
                           </span>
                         </td>
                         <td className="py-3 px-2 whitespace-nowrap text-[13.5px]">
@@ -504,13 +504,13 @@ export const AssignmentManagerPanel: React.FC<AssignmentManagerPanelProps> = ({
                                   );
                                   triggerInteractiveDownload(
                                     bytes,
-                                    `${asg.assignmentCode}_HS.pdfedu`,
-                                    'application/octet-stream'
+                                    `${asg.assignmentCode}_BaiTap.pdf`,
+                                    'application/pdf'
                                   );
-                                  onNotify('Đã xuất lại gói bài tập Offline (.pdfedu).', 'success');
+                                  onNotify('Đã xuất lại tệp bài tập PDF (.pdf).', 'success');
                                 }}
                                 className="p-1.5 rounded-lg border border-slate-300 bg-white hover:bg-teal-50 text-[#087F70] cursor-pointer"
-                                title="Xuất lại gói Offline .pdfedu"
+                                title="Xuất lại tệp bài tập PDF (.pdf)"
                               >
                                 <Download className="w-4 h-4" />
                               </button>

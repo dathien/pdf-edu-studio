@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'pdf-edu-studio-v1.3.0';
+const CACHE_VERSION = 'pdf-edu-studio-v1.3.1';
 
 const SHELL_ASSETS = [
   '/',
@@ -34,10 +34,9 @@ function isSafeToCache(url, response, isNavigate) {
   const pathname = url.pathname.toLowerCase();
   const ct = (response.headers.get('content-type') || '').toLowerCase();
 
-  // Never cache private user PDFs or exported project archives in shared SW cache
+  // Never cache private user PDFs or archive payloads in shared SW cache
   if (
     pathname.endsWith('.pdf') ||
-    pathname.endsWith('.pdfedu') ||
     ct.includes('application/pdf') ||
     ct.includes('application/zip')
   ) {
@@ -164,9 +163,9 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
 
-  // Never cache or intercept private PDF files / project packages
+  // Never cache or intercept private PDF files
   const lowerPath = url.pathname.toLowerCase();
-  if (lowerPath.endsWith('.pdf') || lowerPath.endsWith('.pdfedu')) {
+  if (lowerPath.endsWith('.pdf')) {
     return;
   }
 

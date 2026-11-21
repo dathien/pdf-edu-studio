@@ -11,7 +11,7 @@ import {
 import {
   exportDocumentToPdf,
   exportPagesToImages,
-  saveProjectBundle,
+  saveEditableStudioPdf,
   triggerDownload,
 } from '../../engines/pdf/pdfEngine';
 import { useStudioStore } from '../../stores/useStudioStore';
@@ -66,13 +66,20 @@ export const ExportPrintModal: React.FC<ExportPrintModalProps> = ({ initialMode,
   };
 
   const handleSaveProject = async () => {
-    setBusy('Đang đóng gói dự án .pdfedu...');
+    setBusy('Đang lưu tệp PDF kèm dữ liệu chỉnh sửa tiếp...');
     try {
-      const blob = await saveProjectBundle(doc);
-      triggerDownload(blob, `${baseName}.pdfedu`);
+      const bytes = await saveEditableStudioPdf(doc);
+      const outName = `${baseName}_sua_tiep.pdf`;
+      triggerDownload(new Blob([new Uint8Array(bytes)], { type: 'application/pdf' }), outName);
       markDocSaved(doc.id);
-      notify('Đã lưu dự án .pdfedu (có thể mở lại để chỉnh sửa mọi đối tượng)', 'success');
+      notify(
+        `Đã lưu "${outName}" (xem đầy đủ trên mọi trình đọc PDF và mở lại để chỉnh sửa tiếp trong PDF EDU STUDIO).`,
+        'success'
+      );
       onClose();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Lỗi lưu PDF';
+      notify(`Không thể lưu tệp PDF: ${msg}`, 'error');
     } finally {
       setBusy(null);
     }
@@ -127,7 +134,7 @@ export const ExportPrintModal: React.FC<ExportPrintModalProps> = ({ initialMode,
           {(
             [
               ['pdf', 'Xuất PDF chuẩn', <FileDown className="w-4 h-4" />],
-              ['project', 'Dự án (.pdfedu)', <FileArchive className="w-4 h-4" />],
+              ['project', 'PDF chỉnh sửa tiếp', <FileArchive className="w-4 h-4" />],
               ['images', 'Xuất ảnh PNG/JPG', <FileImage className="w-4 h-4" />],
               ['print', 'In sạch', <Printer className="w-4 h-4" />],
             ] as const
@@ -186,7 +193,7 @@ export const ExportPrintModal: React.FC<ExportPrintModalProps> = ({ initialMode,
           {tab === 'project' && (
             <>
               <p className="text-slate-600 leading-relaxed">
-                Định dạng dự án <strong>.pdfedu</strong> lưu trọn vẹn tệp PDF gốc cùng toàn bộ lớp đối tượng có thể chỉnh sửa lại (công thức MathLive, hình vector, bảng điểm chấm bài, dấu chấm). Thích hợp khi thầy/cô muốn lưu để hôm sau mở lên sửa tiếp hoặc chuyển sang máy tính khác.
+                Xuất thành tệp <strong>PDF chuẩn (.pdf)</strong> hiển thị đầy đủ chữ, công thức, hình vẽ và dấu chấm trên mọi trình đọc PDF thông thường, đồng thời nhúng kèm dữ liệu chỉnh sửa bên trong tệp PDF theo chuẩn ISO 32000-1 để khi mở lại bằng <strong>PDF EDU STUDIO</strong> có thể tiếp tục sửa công thức MathLive, hình vector và bảng điểm.
               </p>
               <div className="flex justify-end">
                 <button
@@ -194,7 +201,7 @@ export const ExportPrintModal: React.FC<ExportPrintModalProps> = ({ initialMode,
                   onClick={handleSaveProject}
                   className="px-5 py-2.5 rounded-lg bg-[#164E63] hover:bg-[#087F70] text-white font-semibold cursor-pointer"
                 >
-                  Lưu dự án {baseName}.pdfedu
+                  Lưu {baseName}_sua_tiep.pdf
                 </button>
               </div>
             </>

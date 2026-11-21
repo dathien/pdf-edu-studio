@@ -82,7 +82,7 @@ function classifyStorageError(err: unknown): StorageOperationResult<never> {
       ok: false,
       quotaExceeded: true,
       errorMessage:
-        'Bộ nhớ trình duyệt (IndexedDB) đã đầy. Hãy xuất ngay tệp sao lưu .pdfedu về máy tính hoặc xóa bớt bài đã lưu cũ.',
+        'Bộ nhớ trình duyệt (IndexedDB) đã đầy. Hãy tải ngay bản sao lưu PDF (.pdf) về máy tính hoặc xóa bớt bài đã lưu cũ.',
     };
   }
   return {

@@ -77,7 +77,7 @@ export const DocumentTabs: React.FC = () => {
           type="button"
           onClick={() => fileInputRef.current?.click()}
           className="flex items-center gap-1 px-2.5 h-8 rounded-md text-[#087F70] hover:bg-white/70 text-[14px] font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer"
-          title="Mở thêm tệp PDF hoặc dự án .pdfedu"
+          title="Mở thêm tệp PDF (*.pdf)"
         >
           <Plus className="w-4 h-4 shrink-0" />
           <span>Mở tệp</span>
@@ -87,7 +87,7 @@ export const DocumentTabs: React.FC = () => {
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".pdf,.pdfedu,application/pdf"
+          accept=".pdf,application/pdf"
           className="hidden"
           onChange={(e) => {
             if (e.target.files) {

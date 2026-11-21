@@ -525,7 +525,7 @@ function renderIllustrationSvg(key: GuideIllustrationKey): React.ReactNode {
     default: {
       // Tailored rich step-flow visual for all remaining lessons
       const metaMap: Record<string, { tab: string; badge1: string; badge2: string; badge3: string; centerTitle: string; centerSub: string }> = {
-        'open-save-pdf': { tab: 'Tệp', badge1: '1. Mở PDF / Kéo thả', badge2: '2. Chỉnh sửa trực tiếp', badge3: '3. Lưu PDF mới / .pdfedu', centerTitle: 'Tệp gốc luôn an toàn · Xuất tệp PDF mới hoàn chỉnh', centerSub: 'Dùng .pdf để in & gửi học sinh · Dùng .pdfedu để hôm sau sửa tiếp' },
+        'open-save-pdf': { tab: 'Tệp', badge1: '1. Mở PDF / Kéo thả', badge2: '2. Chỉnh sửa trực tiếp', badge3: '3. Lưu PDF chuẩn', centerTitle: 'Tệp gốc luôn an toàn · Xuất tệp PDF chuẩn hoàn chỉnh', centerSub: 'Dùng tệp .pdf để in, gửi Zalo & mở lại chỉnh sửa tiếp trong PDF EDU STUDIO' },
         'add-text-image': { tab: 'Chỉnh sửa', badge1: '1. Thêm văn bản (T)', badge2: '2. Chèn ảnh / Logo', badge3: '3. Căn chỉnh & Nhóm', centerTitle: 'Chèn chữ tiếng Việt, logo trường & căn thẳng hàng', centerSub: 'Giữ phím Shift chọn nhiều đối tượng → Căn trái / Căn giữa ở cột Thuộc tính' },
         'find-replace': { tab: 'Chỉnh sửa', badge1: '1. Mở Tìm & Thay thế', badge2: '2. Nhập từ cần tìm', badge3: '3. Thay thế hàng loạt', centerTitle: 'Tìm kiếm & Thay thế nhanh trên toàn bộ trang PDF', centerSub: 'Nhấn Ctrl + F hoặc Ctrl + H · Nhấp kết quả để nhảy tới đúng trang' },
         'annotate-pen-note': { tab: 'Chú thích', badge1: '1. Bút vẽ tay (P)', badge2: '2. Bút dạ quang / Tô sáng', badge3: '3. Ghi chú nổi / Tẩy', centerTitle: 'Đánh dấu bài giảng & ghi chú trực tiếp không hỏng PDF gốc', centerSub: 'Công cụ Tẩy chỉ xóa nét vẽ & chú thích, an toàn tuyệt đối cho đề thi' },

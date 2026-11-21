@@ -448,7 +448,7 @@ export default function App() {
         ref={quickOpenInputRef}
         type="file"
         multiple
-        accept=".pdf,.pdfedu,application/pdf"
+        accept=".pdf,application/pdf"
         className="hidden"
         onChange={(e) => {
           if (e.target.files) {

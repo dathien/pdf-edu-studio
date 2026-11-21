@@ -72,7 +72,7 @@ import {
   insertImageFileToActiveDoc,
   openFilesInStudio,
   quickSavePdf,
-  quickSaveProjectBundle,
+  quickSaveEditablePdf,
 } from '../services/documentActions';
 import { exportGradebookToExcel } from '../engines/grading/gradingEngine';
 import { getDiagramByKey } from '../engines/geometry/diagramLibrary';
@@ -419,7 +419,7 @@ export const RibbonToolbar: React.FC = () => {
           <>
             <RibbonBtn
               icon={<FolderOpen className="w-[22px] h-[22px] text-[#087F70]" />}
-              label="Mở PDF / .pdfedu"
+              label="Mở tệp PDF"
               onClick={() => openPdfRef.current?.click()}
             />
             <RibbonBtn
@@ -436,9 +436,9 @@ export const RibbonToolbar: React.FC = () => {
             />
             <RibbonBtn
               icon={<FileArchive className="w-[22px] h-[22px] text-[#164E63]" />}
-              label="Lưu dự án (.pdfedu)"
+              label="Lưu PDF sửa tiếp"
               disabled={!activeDoc}
-              onClick={() => activeDoc && quickSaveProjectBundle(activeDoc)}
+              onClick={() => activeDoc && quickSaveEditablePdf(activeDoc)}
             />
             <RibbonBtn
               icon={<FileDown className="w-[22px] h-[22px] text-[#087F70]" />}
@@ -1134,7 +1134,7 @@ export const RibbonToolbar: React.FC = () => {
         ref={openPdfRef}
         type="file"
         multiple
-        accept=".pdf,.pdfedu,application/pdf"
+        accept=".pdf,application/pdf"
         className="hidden"
         onChange={(e) => {
           if (e.target.files) {

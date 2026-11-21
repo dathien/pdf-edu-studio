@@ -193,7 +193,7 @@ function getBlueprint(templateId: string): TemplateBlueprint {
   switch (templateId) {
     case 'tpl-math-12':
       return {
-        subtitleNote: 'Hướng dẫn: Hoàn thành trực tiếp trên từng khung tương tác, nhấn Lưu bài và xuất .pdfedu khi nộp.',
+        subtitleNote: 'Hướng dẫn: Hoàn thành trực tiếp trên từng khung tương tác, nhấn Lưu bài và lưu thành tệp PDF (.pdf) khi nộp.',
         pageCount: 2,
         questions: [
           {

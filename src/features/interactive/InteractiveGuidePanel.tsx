@@ -89,8 +89,8 @@ export const InteractiveGuidePanel: React.FC = () => {
                 <span>Bước 3: Giao bài Offline hoặc tạo liên kết Online tại mục "Giao bài"</span>
               </h3>
               <p className="text-[15.5px] text-slate-700 leading-relaxed">
-                <strong>Offline:</strong> Xuất tệp <code>.pdfedu</code> (đã loại bỏ hoàn toàn đáp án giáo viên) gửi qua Zalo, Email, LMS hoặc USB.{' '}
-                <strong>Online:</strong> Khi đặt tệp <code>.pdfedu</code> lên đường dẫn HTTPS hợp lệ, dán URL vào mục <strong>Giao bài → Online</strong> để sinh liên kết thật và mã bài cho học sinh mở trực tiếp. Danh sách <strong>Quản lý bài đã giao</strong> lưu lại lịch giao, hạn nộp và thống kê số bài nộp thật đã nhận.
+                <strong>Offline:</strong> Xuất tệp bài tập chuẩn <code>.pdf</code> (đã loại bỏ hoàn toàn đáp án giáo viên) gửi qua Zalo (chế độ gửi tệp), Email, LMS hoặc USB.{' '}
+                <strong>Online:</strong> Khi đặt tệp bài tập <code>.pdf</code> lên đường dẫn HTTPS hợp lệ, dán URL vào mục <strong>Giao bài → Online</strong> để sinh liên kết thật và mã bài cho học sinh mở trực tiếp. Danh sách <strong>Quản lý bài đã giao</strong> lưu lại lịch giao, hạn nộp và thống kê số bài nộp thật đã nhận.
               </p>
             </div>
 
@@ -102,7 +102,7 @@ export const InteractiveGuidePanel: React.FC = () => {
                 <span>Thu bài, chấm tự động + chấm thủ công, xuất PDF trả bài & Excel</span>
               </h3>
               <p className="text-[15.5px] text-slate-700 leading-relaxed">
-                Tại mục <strong>Thu bài & Chấm bài</strong>, nhập cùng lúc nhiều tệp bài nộp <code>.pdfedu</code> của học sinh. Hệ thống kiểm tra tính toàn vẹn, phát hiện trùng lặp, không tự ghi đè bài đã chấm và chỉ chấm tự động theo đáp án gốc giáo viên (tự luận, vẽ hình, công thức phức tạp, tệp đính kèm do giáo viên chấm thủ công). Sau đó xuất <strong>PDF trả bài</strong> (hiển thị cả đường nối, thẻ kéo thả, điểm & nhận xét) và <strong>bảng điểm Excel (.xlsx)</strong>.
+                Tại mục <strong>Thu bài & Chấm bài</strong>, nhập cùng lúc nhiều tệp bài nộp <code>.pdf</code> của học sinh. Hệ thống kiểm tra tính toàn vẹn, phát hiện trùng lặp, không tự ghi đè bài đã chấm và chỉ chấm tự động theo đáp án gốc giáo viên (tự luận, vẽ hình, công thức phức tạp, tệp đính kèm do giáo viên chấm thủ công). Nếu tệp PDF bị công cụ ngoài lược bỏ dữ liệu tương tác nhúng, hệ thống thông báo rõ ràng và vẫn cho phép giáo viên xem bài và chấm thủ công. Sau đó xuất <strong>PDF trả bài</strong> và <strong>bảng điểm Excel (.xlsx)</strong>.
               </p>
             </div>
           </div>
@@ -111,10 +111,10 @@ export const InteractiveGuidePanel: React.FC = () => {
             <div className="rounded-xl bg-white border border-slate-200 p-5 space-y-2.5">
               <h3 className="text-[17px] font-bold text-[#087F70] flex items-center gap-2">
                 <FolderOpen className="w-5 h-5 shrink-0" />
-                <span>Bước 1: Mở bài tập từ tệp Offline (.pdfedu) hoặc liên kết Online</span>
+                <span>Bước 1: Mở tệp bài tập PDF (.pdf) từ Zalo/máy tính hoặc liên kết Online</span>
               </h3>
               <p className="text-[15.5px] text-slate-700 leading-relaxed">
-                Em mở tệp <code>.pdfedu</code> giáo viên gửi tại mục <strong>Làm bài</strong>, hoặc nhấn trực tiếp vào liên kết bài tập giáo viên chia sẻ. Sau khi tải về, em vẫn có thể tiếp tục làm bài ngay cả khi mất kết nối mạng.
+                Em mở tệp <code>.pdf</code> giáo viên gửi tại mục <strong>Làm bài</strong> (hoặc mở trực tiếp từ Trang chủ), hay nhấn vào liên kết bài tập giáo viên chia sẻ. Sau khi tải về, em vẫn có thể tiếp tục làm bài ngay cả khi mất kết nối mạng.
               </p>
             </div>
 
@@ -141,10 +141,10 @@ export const InteractiveGuidePanel: React.FC = () => {
             <div className="rounded-xl bg-white border border-slate-200 p-5 space-y-2.5">
               <h3 className="text-[17px] font-bold text-[#087F70] flex items-center gap-2">
                 <FileDown className="w-5 h-5 shrink-0" />
-                <span>Bước 4: Hoàn thành và xuất bài nộp cho giáo viên</span>
+                <span>Bước 4: Hoàn thành và lưu thành tệp PDF (.pdf) nộp cho giáo viên</span>
               </h3>
               <p className="text-[15.5px] text-slate-700 leading-relaxed">
-                Nhấn <strong>Xuất bài nộp (.pdfedu)</strong> để tạo tệp nộp chuẩn gửi cho giáo viên chấm điểm, và có thể xuất thêm <strong>PDF bài làm</strong> để lưu trữ hoặc in ra giấy.
+                Nhấn <strong>Lưu & Xuất PDF bài làm (.pdf)</strong> để tạo tệp <code>.pdf</code> chuẩn hiển thị đầy đủ câu trả lời, dấu chọn, đường nối, nét vẽ trên mọi trình đọc PDF thông thường — đồng thời nhúng kèm dữ liệu tương tác chuẩn ISO 32000-1 để em có thể mở lại sửa tiếp và giáo viên mở chấm bài dễ dàng.
               </p>
             </div>
           </div>
@@ -153,9 +153,9 @@ export const InteractiveGuidePanel: React.FC = () => {
         <div className="rounded-xl bg-[#E6F1EF] border border-teal-200 p-5 flex items-start gap-3">
           <ShieldCheck className="w-6 h-6 text-[#087F70] shrink-0 mt-0.5" />
           <div className="space-y-1 text-[15px] text-[#164E63]">
-            <div className="font-bold">Cam kết minh bạch về Offline, Online & An toàn dữ liệu</div>
+            <div className="font-bold">Cam kết minh bạch về chuẩn PDF, Offline & An toàn dữ liệu</div>
             <p className="leading-relaxed">
-              Quy trình Offline xử lý 100% cục bộ không cần đăng nhập hay API trả phí, không lưu đáp án giáo viên trong tệp giao học sinh và không tin điểm tự khai trong bài nộp. Khi chưa kết nối máy chủ thu bài riêng, ứng dụng không giả lập nút nộp trực tuyến mà hướng dẫn học sinh xuất tệp <strong>.pdfedu</strong> gửi qua kênh lớp học.
+              Toàn bộ ứng dụng chỉ dùng định dạng chuẩn <strong>PDF (*.pdf)</strong>, xử lý 100% cục bộ không cần đăng nhập hay API trả phí, không lưu đáp án giáo viên trong tệp giao học sinh và không tin điểm tự khai trong bài nộp. Khi chưa kết nối máy chủ thu bài riêng, ứng dụng không giả lập nút nộp trực tuyến mà hướng dẫn học sinh lưu tệp <strong>.pdf</strong> gửi lại qua Zalo hoặc Email.
             </p>
           </div>
         </div>

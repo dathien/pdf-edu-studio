@@ -265,7 +265,7 @@ export interface InteractiveQuestion {
 }
 
 /**
- * Strictly separated Teacher Answer Key (NEVER packaged inside student .pdfedu files).
+ * Strictly separated Teacher Answer Key (NEVER packaged inside student .pdf files).
  */
 export interface TeacherQuestionKey {
   questionId: string;
@@ -426,7 +426,7 @@ export interface AssignmentRecord {
   startTime?: string;
   dueDate?: string;
   deliveryMode: AssignmentDeliveryMode;
-  /** Only populated when teacher provides a real, accessible HTTPS/same-origin .pdfedu URL */
+  /** Only populated when teacher provides a real, accessible HTTPS/same-origin .pdf URL */
   hostedPackageUrl?: string;
   shareableLink?: string;
   status: 'active' | 'closed' | 'draft';

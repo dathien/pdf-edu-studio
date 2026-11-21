@@ -514,9 +514,9 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       });
   }, [notify, setInteractiveTab]);
 
-  // Handle pending .pdfedu file routed from Welcome Screen / Ctrl+O
+  // Handle .pdf file routed from Welcome Screen / Ctrl+O or selected inside Interactive Hub
   const handleExternalPackageFile = useCallback(
-    async (file: File) => {
+    async (file: File, preferredMode: 'auto' | 'solve' | 'author' | 'grade' = 'auto') => {
       try {
         const parsed = await parseInteractivePackage(file, file.name);
         if (parsed.kind === 'worksheet') {
@@ -528,16 +528,8 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
           setSolveStartedAt(Date.now());
           setSolveTemplateKeysForPractice(undefined);
           setInteractiveTab('solve');
-          notify(`Đã mở bài tập "${parsed.worksheet.title}" (đã xác minh toàn vẹn).`, 'success');
+          notify(`Đã mở bài tập PDF "${parsed.worksheet.title}" (đã xác minh toàn vẹn).`, 'success');
         } else if (parsed.kind === 'teacher-master') {
-          setAuthorWorksheet(parsed.worksheet);
-          setAuthorKeys(parsed.answerKeys);
-          setAuthorPdfBytes(parsed.pdfBytes);
-          setRawUploadedPdfBytes(parsed.pdfBytes);
-          setRawPdfInfo(null);
-          setDetectionNotes([]);
-          setSelectedAuthorQId(parsed.worksheet.questions[0]?.id || null);
-          setAuthorLeftTab('questions');
           await interactiveStorage.saveTeacherWorksheet({
             worksheetId: parsed.worksheet.worksheetId,
             worksheet: parsed.worksheet,
@@ -547,15 +539,78 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
             updatedAt: Date.now(),
           });
           await refreshLocalLists();
-          setInteractiveTab('author');
-          notify(`Đã nạp bản gốc giáo viên "${parsed.worksheet.title}".`, 'success');
+          if (preferredMode === 'grade') {
+            setGradeWorksheetId(parsed.worksheet.worksheetId);
+            setInteractiveTab('grade');
+            notify(
+              `Đã nạp đề gốc & đáp án giáo viên "${parsed.worksheet.title}" vào mục Chấm bài.`,
+              'success'
+            );
+          } else {
+            setAuthorWorksheet(parsed.worksheet);
+            setAuthorKeys(parsed.answerKeys);
+            setAuthorPdfBytes(parsed.pdfBytes);
+            setRawUploadedPdfBytes(parsed.pdfBytes);
+            setRawPdfInfo(null);
+            setDetectionNotes([]);
+            setSelectedAuthorQId(parsed.worksheet.questions[0]?.id || null);
+            setAuthorLeftTab('questions');
+            setInteractiveTab('author');
+            notify(`Đã nạp bản gốc giáo viên "${parsed.worksheet.title}".`, 'success');
+          }
         } else if (parsed.kind === 'submission') {
-          setInteractiveTab('grade');
-          setGradeModeTab('offline');
-          await importStudentSubmissionFiles([file]);
+          if (preferredMode === 'grade') {
+            setInteractiveTab('grade');
+            setGradeModeTab('offline');
+            await importStudentSubmissionFiles([file]);
+            return;
+          }
+          // Re-open student's saved PDF right into Làm bài with ALL answers intact & live-editable!
+          const allMasters = await interactiveStorage.listTeacherWorksheets();
+          const matchedMaster = allMasters.find(
+            (m) => m.worksheetId === parsed.submission.worksheetId
+          );
+          const restoredWorksheet =
+            parsed.worksheetSnapshot ||
+            (matchedMaster ? sanitizeWorksheetForStudent(matchedMaster.worksheet) : null);
+
+          if (!restoredWorksheet) {
+            setInteractiveTab('grade');
+            setGradeModeTab('offline');
+            await importStudentSubmissionFiles([file]);
+            return;
+          }
+
+          const newDraftId = `draft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          setSolveDraftId(newDraftId);
+          setSolveWorksheet(restoredWorksheet);
+          setSolvePdfBytes(parsed.pdfBytes);
+          setSolveStudent(parsed.submission.student);
+          setSolveAnswers(parsed.submission.answers);
+          setSolveStartedAt(parsed.submission.startedAt || Date.now());
+          setSolveTemplateKeysForPractice(undefined);
+          setSolveSavedStatus('saved');
+          setSolveLastSavedAt(parsed.submission.submittedAt || Date.now());
+          setInteractiveTab('solve');
+          notify(
+            `Đã mở lại bài làm PDF "${restoredWorksheet.title}" với đầy đủ câu trả lời nhúng (có thể tiếp tục chỉnh sửa hoặc chuyển sang Chấm bài).`,
+            'success'
+          );
+        } else if (parsed.kind === 'plain-pdf') {
+          if (preferredMode === 'grade') {
+            setInteractiveTab('grade');
+            setGradeModeTab('offline');
+            await importStudentSubmissionFiles([file]);
+            return;
+          }
+          notify(
+            parsed.warning ||
+              `Tệp "${file.name}" là PDF thông thường (không chứa dữ liệu tương tác nhúng). Nếu muốn tạo bài tập từ tệp này, hãy dùng mục "Tạo bài tập".`,
+            'warning'
+          );
         }
       } catch (err) {
-        notify(err instanceof Error ? err.message : 'Không thể đọc gói .pdfedu.', 'error');
+        notify(err instanceof Error ? err.message : 'Không thể đọc tệp PDF.', 'error');
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -887,13 +942,13 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       const safeName = authorWorksheet.title
         .replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF_-]+/g, '_')
         .slice(0, 60);
-      triggerInteractiveDownload(bytes, `${safeName}_bai_tap_HS.pdfedu`, 'application/octet-stream');
+      triggerInteractiveDownload(bytes, `${safeName}_BaiTap.pdf`, 'application/pdf');
       notify(
-        'Đã xuất gói bài tập .pdfedu cho học sinh (đã loại bỏ hoàn toàn đáp án giáo viên).',
+        'Đã xuất tệp bài tập PDF (.pdf) gửi học sinh qua Zalo/Email (không chứa đáp án giáo viên).',
         'success'
       );
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Không thể xuất gói bài tập.', 'error');
+      notify(err instanceof Error ? err.message : 'Không thể xuất tệp bài tập PDF.', 'error');
     }
   };
 
@@ -904,8 +959,8 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       const safeName = authorWorksheet.title
         .replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF_-]+/g, '_')
         .slice(0, 60);
-      triggerInteractiveDownload(bytes, `${safeName}_ban_goc_GV.pdfedu`, 'application/octet-stream');
-      notify('Đã xuất tệp sao lưu bản gốc giáo viên (kèm đáp án).', 'success');
+      triggerInteractiveDownload(bytes, `${safeName}_BanGocGV.pdf`, 'application/pdf');
+      notify('Đã xuất tệp PDF bản gốc giáo viên (kèm đáp án nhúng riêng cho GV).', 'success');
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Không thể xuất bản gốc giáo viên.', 'error');
     }
@@ -1036,51 +1091,63 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
 
   const handleExportSubmissionPackage = async () => {
     if (!solveWorksheet || !solvePdfBytes) return;
-    if (!solveStudent.studentName.trim()) {
-      notify('Vui lòng nhập Họ và tên học sinh trước khi xuất tệp nộp bài.', 'warning');
-      return;
-    }
+    const missingName = !solveStudent.studentName.trim();
+    const effectiveStudent: StudentProfileInfo = {
+      studentName: solveStudent.studentName.trim() || 'Học sinh',
+      className: solveStudent.className.trim(),
+      studentCode: solveStudent.studentCode.trim(),
+    };
     try {
       await persistCurrentSolveDraft('completed', true);
       const { bytes } = await exportStudentSubmissionPackage({
         worksheet: solveWorksheet,
-        student: solveStudent,
+        student: effectiveStudent,
         answers: solveAnswers,
         pdfBytes: solvePdfBytes,
         startedAt: solveStartedAt,
         includeRenderedPdf: true,
       });
-      const safeStu = solveStudent.studentName
-        .trim()
+      const safeStu = effectiveStudent.studentName
         .replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF_-]+/g, '_')
         .slice(0, 40);
-      const safeClass = (solveStudent.className || 'Lop').replace(/[^a-zA-Z0-9_-]+/g, '_');
-      triggerInteractiveDownload(bytes, `BaiNop_${safeClass}_${safeStu}.pdfedu`, 'application/octet-stream');
+      const safeClass = (effectiveStudent.className || 'Lop').replace(/[^a-zA-Z0-9_-]+/g, '_');
+      triggerInteractiveDownload(bytes, `BaiLam_${safeClass}_${safeStu}.pdf`, 'application/pdf');
       notify(
-        'Đã xuất tệp bài nộp .pdfedu (đã gắn mã kiểm tra toàn vẹn). Hãy gửi tệp này cho giáo viên.',
+        missingName
+          ? 'Đã lưu tệp PDF bài làm (.pdf). Nên điền Họ tên học sinh ở thanh trên trước khi gửi nộp cho giáo viên.'
+          : 'Đã lưu tệp PDF bài làm (.pdf) hiển thị đầy đủ câu trả lời, dấu chọn, đường nối và dữ liệu chỉnh sửa tiếp. Gửi tệp PDF này cho giáo viên qua Zalo/Email.',
         'success'
       );
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Không thể xuất tệp bài nộp.', 'error');
+      notify(err instanceof Error ? err.message : 'Không thể lưu tệp PDF bài làm.', 'error');
     }
   };
 
-  const handleExportStudentVisualPdf = async () => {
+  const handleSendActiveSolveToGrade = async () => {
     if (!solveWorksheet || !solvePdfBytes) return;
     try {
-      const bytes = await renderInteractiveAnswersToPdf({
-        pdfBytes: solvePdfBytes,
+      const effectiveStudent: StudentProfileInfo = {
+        studentName: solveStudent.studentName.trim() || 'Học sinh',
+        className: solveStudent.className.trim(),
+        studentCode: solveStudent.studentCode.trim(),
+      };
+      const { bytes } = await exportStudentSubmissionPackage({
         worksheet: solveWorksheet,
-        student: solveStudent,
+        student: effectiveStudent,
         answers: solveAnswers,
+        pdfBytes: solvePdfBytes,
+        startedAt: solveStartedAt,
+        includeRenderedPdf: true,
       });
-      const safeStu = (solveStudent.studentName || 'HocSinh')
-        .replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF_-]+/g, '_')
-        .slice(0, 40);
-      triggerInteractiveDownload(bytes, `BaiLam_${safeStu}.pdf`, 'application/pdf');
-      notify('Đã xuất tệp PDF bài làm (kèm đường nối ghép đôi, thẻ kéo thả và câu trả lời).', 'success');
+      const safeName = `${effectiveStudent.studentName.replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF_-]+/g, '_')}.pdf`;
+      const syntheticFile = new File([new Uint8Array(bytes)], safeName, {
+        type: 'application/pdf',
+      });
+      setInteractiveTab('grade');
+      setGradeModeTab('offline');
+      await importStudentSubmissionFiles([syntheticFile]);
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Không thể xuất PDF bài làm.', 'error');
+      notify(err instanceof Error ? err.message : 'Không thể chuyển sang mục Chấm bài.', 'error');
     }
   };
 
@@ -1136,8 +1203,96 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
     for (const file of fileArr) {
       try {
         const parsed = await parseInteractivePackage(file, file.name);
+
+        if (parsed.kind === 'plain-pdf') {
+          // Honest handling: never fake auto-grading when embedded interactive data is absent.
+          // Allow teacher to import visual PDF for manual viewing, scoring, commenting, and Return PDF / Excel export.
+          const fallbackWsId = activeTeacherMaster?.worksheetId || `plain-pdf-${Date.now()}`;
+          const fallbackWs: InteractiveWorksheet = activeTeacherMaster?.worksheet || {
+            worksheetId: fallbackWsId,
+            schemaVersion: 2,
+            title: file.name.replace(/\.pdf$/i, ''),
+            subject: 'general',
+            subjectLabel: 'Tổng hợp',
+            grade: 12,
+            description: 'Tệp PDF thường (không có dữ liệu tương tác nhúng) — chấm thủ công.',
+            teacherName: 'Giáo viên',
+            examMode: 'exam',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            questions: [
+              {
+                id: 'manual-overall',
+                code: 'Tổng bài',
+                title: 'Chấm thủ công trực tiếp trên PDF',
+                prompt:
+                  'Tệp PDF không chứa dữ liệu tương tác nhúng; giáo viên xem trực tiếp bài hiển thị và nhập điểm thủ công.',
+                type: 'essay',
+                maxPoints: 10,
+                required: true,
+                region: { pageIndex: 0, x: 40, y: 100, width: 500, height: 120 },
+              },
+            ],
+          };
+
+          const manualDetails: Record<string, QuestionGradingDetail> = {};
+          let maxScore = 0;
+          for (const q of fallbackWs.questions) {
+            maxScore += q.maxPoints;
+            manualDetails[q.id] = {
+              questionId: q.id,
+              maxPoints: q.maxPoints,
+              autoPoints: null,
+              earnedPoints: null,
+              mode: 'manual',
+              markStatus: 'pending',
+            };
+          }
+
+          const incomingPlain: GradedSubmissionRecord = {
+            submissionId: `plain-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            worksheetId: fallbackWs.worksheetId,
+            worksheetTitle: fallbackWs.title,
+            fileName: file.name,
+            student: {
+              studentName: file.name.replace(/\.pdf$/i, '').slice(0, 80),
+              className: activeTeacherMaster?.worksheet.className || '',
+              studentCode: '',
+            },
+            submittedAt: file.lastModified || Date.now(),
+            importedAt: Date.now(),
+            answers: {},
+            pdfBytes: parsed.pdfBytes,
+            worksheetSnapshot: fallbackWs,
+            gradingDetails: manualDetails,
+            totalScore: 0,
+            maxScore: Math.round(maxScore * 100) / 100,
+            teacherComment:
+              'Lưu ý: Tệp PDF này không chứa dữ liệu tương tác nhúng (PDF thông thường hoặc đã bị công cụ ngoài lược bỏ dữ liệu nhúng). Không tự động khôi phục câu trả lời; giáo viên xem trực tiếp trên PDF và chấm thủ công.',
+            status: 'ungraded',
+            updatedAt: Date.now(),
+          };
+
+          const saveRes = await interactiveStorage.saveSubmission(incomingPlain);
+          if (!saveRes.ok) {
+            if (saveRes.quotaExceeded)
+              setQuotaBanner(saveRes.errorMessage || 'Bộ nhớ cục bộ đã đầy.');
+            skipped.push(`${file.name}: ${saveRes.errorMessage}`);
+            continue;
+          }
+          imported++;
+          skipped.push(
+            `${file.name}: Đã nhập ở chế độ CHẤM THỦ CÔNG (PDF không có dữ liệu tương tác nhúng).`
+          );
+          if (!firstImportedId) firstImportedId = incomingPlain.submissionId;
+          if (!firstWorksheetId) firstWorksheetId = incomingPlain.worksheetId;
+          continue;
+        }
+
         if (parsed.kind !== 'submission') {
-          skipped.push(`${file.name}: Không phải tệp bài nộp học sinh (.pdfedu).`);
+          skipped.push(
+            `${file.name}: Đây là tệp đề bài tập hoặc bản gốc giáo viên, không phải bài làm học sinh (.pdf).`
+          );
           continue;
         }
         const sub = parsed.submission;
@@ -1215,7 +1370,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
         if (!firstImportedId) firstImportedId = incomingRecord.submissionId;
         if (!firstWorksheetId) firstWorksheetId = incomingRecord.worksheetId;
       } catch (err) {
-        skipped.push(`${file.name}: ${err instanceof Error ? err.message : 'Tệp không hợp lệ.'}`);
+        skipped.push(`${file.name}: ${err instanceof Error ? err.message : 'Tệp PDF không hợp lệ.'}`);
       }
     }
 
@@ -1225,11 +1380,11 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
     if (firstImportedId) setSelectedSubmissionId(firstImportedId);
     if (imported > 0) {
       notify(
-        `Đã nhập thành công ${imported} bài nộp học sinh và chấm tự động phần khách quan.`,
+        `Đã nhập thành công ${imported} bài nộp PDF của học sinh.`,
         'success'
       );
     } else if (skipped.length > 0) {
-      notify(`Có ${skipped.length} tệp không nhập được. Xem chi tiết thông báo.`, 'warning');
+      notify(`Có ${skipped.length} tệp cần lưu ý. Xem chi tiết thông báo.`, 'warning');
     }
   };
 
@@ -1471,7 +1626,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                 onClick={handleExportSubmissionPackage}
                 className="px-3 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold text-[14px] cursor-pointer"
               >
-                Tải sao lưu .pdfedu ngay
+                Tải sao lưu PDF ngay
               </button>
             )}
             <button
@@ -1564,7 +1719,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                         className="inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-[14px] cursor-pointer"
                       >
                         <FolderOpen className="w-4 h-4" />
-                        <span>Mở bản gốc GV (.pdfedu)</span>
+                        <span>Mở bản gốc GV (.pdf)</span>
                       </button>
                     </div>
                   </div>
@@ -1899,7 +2054,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#087F70] bg-teal-50 hover:bg-teal-100 text-[#164E63] font-semibold text-[14px] cursor-pointer"
                     >
                       <FileDown className="w-4 h-4 text-[#087F70]" />
-                      <span>Xuất .pdfedu HS</span>
+                      <span>Xuất PDF bài tập</span>
                     </button>
                     <button
                       type="button"
@@ -2150,24 +2305,24 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                     Mở bài tập PDF tương tác để làm bài (Online hoặc Offline)
                   </h2>
                   <p className="text-[15.5px] text-slate-600">
-                    Mở tệp bài tập <strong>.pdfedu</strong> do giáo viên gửi, dán đường dẫn trực tuyến hợp lệ, hoặc chọn 1 trong 8 phiếu bài tập mẫu THPT bên dưới để thực hành ngay.
+                    Mở tệp bài tập <strong>PDF (*.pdf)</strong> do giáo viên gửi (hoặc mở lại bài làm PDF đã lưu để làm tiếp), dán đường dẫn trực tuyến hợp lệ, hoặc chọn 1 trong 8 phiếu bài tập mẫu THPT bên dưới.
                   </p>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                     <div className="rounded-xl border-2 border-dashed border-[#087F70]/50 bg-[#F4F8F7] p-5 space-y-3">
                       <div className="text-[16px] font-bold text-[#164E63] flex items-center gap-2">
                         <FolderOpen className="w-5 h-5 text-[#087F70]" />
-                        <span>Mở tệp bài tập từ máy tính (Offline)</span>
+                        <span>Mở tệp bài tập PDF từ máy tính (Offline)</span>
                       </div>
                       <p className="text-[14.5px] text-slate-600">
-                        Hỗ trợ gói bài tập <strong>.pdfedu</strong> hoạt động đầy đủ khi không có Internet.
+                        Hỗ trợ tệp <strong>PDF (*.pdf)</strong> giáo viên gửi qua Zalo/Email hoặc bài làm PDF đã lưu trước đó để làm tiếp khi không có Internet.
                       </p>
                       <button
                         type="button"
                         onClick={() => solvePackageInputRef.current?.click()}
                         className="px-4 py-2 rounded-lg bg-[#087F70] hover:bg-[#06695d] text-white font-semibold text-[15px] cursor-pointer"
                       >
-                        Chọn tệp .pdfedu từ máy
+                        Chọn tệp PDF (*.pdf) từ máy
                       </button>
                     </div>
 
@@ -2181,7 +2336,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                           type="url"
                           value={onlineUrlInput}
                           onChange={(e) => setOnlineUrlInput(e.target.value)}
-                          placeholder="https://.../bai_tap.pdfedu"
+                          placeholder="https://.../bai_tap.pdf"
                           className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-[14.5px] focus:border-[#087F70] outline-none"
                         />
                         <button
@@ -2337,21 +2492,25 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
 
                   <button
                     type="button"
-                    onClick={handleExportStudentVisualPdf}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#164E63] bg-white hover:bg-slate-50 text-[#164E63] font-semibold text-[14.5px] cursor-pointer"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>Xuất PDF bài làm</span>
-                  </button>
-
-                  <button
-                    type="button"
                     onClick={handleExportSubmissionPackage}
                     className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#087F70] hover:bg-[#06695d] text-white font-semibold text-[14.5px] cursor-pointer shadow-2xs"
+                    title="Lưu thành tệp PDF chuẩn hiển thị đầy đủ bài làm trên mọi trình đọc PDF và mở lại sửa tiếp hoặc nộp giáo viên"
                   >
                     <FileDown className="w-4 h-4" />
-                    <span>Xuất bài nộp (.pdfedu)</span>
+                    <span>Lưu thành PDF (.pdf)</span>
                   </button>
+
+                  {solveProgress.done > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleSendActiveSolveToGrade}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#164E63] bg-white hover:bg-slate-50 text-[#164E63] font-semibold text-[13.5px] cursor-pointer"
+                      title="Dành cho giáo viên: chuyển bài làm đang mở sang mục Thu bài & Chấm bài"
+                    >
+                      <ClipboardCheck className="w-4 h-4" />
+                      <span>Chấm bài (GV)</span>
+                    </button>
+                  )}
 
                   <button
                     type="button"
@@ -2430,7 +2589,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                   Chưa có bài tập nào được lưu
                 </div>
                 <p className="text-[15px] text-slate-600">
-                  Vào mục <strong>Làm bài</strong> để mở tệp .pdfedu hoặc phiếu mẫu 8 môn THPT. Mọi tiến độ sẽ tự động lưu tại đây.
+                  Vào mục <strong>Làm bài</strong> để mở tệp PDF (*.pdf) hoặc phiếu mẫu 8 môn THPT. Mọi tiến độ sẽ tự động lưu tại đây.
                 </p>
                 <button
                   type="button"
@@ -2545,19 +2704,22 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                               answers: draft.answers,
                               pdfBytes: draft.pdfBytes,
                               startedAt: draft.createdAt,
-                              includeRenderedPdf: false,
+                              includeRenderedPdf: true,
                             });
+                            const safeDraft = draft.customTitle
+                              .replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF_-]+/g, '_')
+                              .slice(0, 35);
                             triggerInteractiveDownload(
                               bytes,
-                              `SaoLuu_${draft.customTitle.slice(0, 35)}.pdfedu`,
-                              'application/octet-stream'
+                              `SaoLuu_${safeDraft}.pdf`,
+                              'application/pdf'
                             );
-                            notify('Đã tải bản sao lưu .pdfedu về máy tính.', 'success');
+                            notify('Đã tải bản sao lưu PDF (.pdf) về máy tính.', 'success');
                           }}
                           className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-teal-50 text-[#164E63] font-semibold text-[14px] cursor-pointer"
-                          title="Xuất bản sao lưu .pdfedu"
+                          title="Xuất bản sao lưu PDF (.pdf)"
                         >
-                          Sao lưu
+                          Sao lưu PDF
                         </button>
 
                         {!isConfirmDelete ? (
@@ -2657,7 +2819,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                       Phiên bản hiện tại chạy hoàn toàn cục bộ trên trình duyệt (không kết nối Firebase hoặc máy chủ lưu trữ từ xa), do đó hệ thống <strong>không hiển thị số liệu giả</strong> và <strong>không mô phỏng việc thu bài Online</strong>.
                     </p>
                     <p>
-                      Để thu bài ngay hôm nay, thầy/cô hãy nhận các tệp bài nộp <strong>.pdfedu</strong> của học sinh (qua Zalo, Email, LMS hoặc USB) rồi chuyển sang thẻ <strong>Thu bài & Chấm bài Offline</strong> để nhập hàng loạt, chấm tự động + thủ công, xuất PDF trả bài và xuất bảng điểm Excel.
+                      Để thu bài ngay hôm nay, thầy/cô hãy nhận các tệp bài làm <strong>PDF (*.pdf)</strong> của học sinh (qua Zalo, Email, LMS hoặc USB) rồi chuyển sang thẻ <strong>Thu bài & Chấm bài Offline</strong> để nhập hàng loạt, chấm tự động + thủ công, xuất PDF trả bài và xuất bảng điểm Excel.
                     </p>
                     <div className="pt-1">
                       <button
@@ -2705,7 +2867,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                       onClick={() => gradeMasterInputRef.current?.click()}
                       className="w-full py-1.5 rounded-lg border border-slate-300 bg-slate-50 hover:bg-teal-50 text-[#164E63] font-semibold text-[13.5px] cursor-pointer"
                     >
-                      + Nạp tệp bản gốc GV (.pdfedu)
+                      + Nạp tệp bản gốc GV (.pdf)
                     </button>
                   </div>
 
@@ -2716,7 +2878,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                       className="w-full inline-flex items-center justify-center gap-2 py-2 rounded-lg bg-[#087F70] hover:bg-[#06695d] text-white font-semibold text-[14.5px] cursor-pointer"
                     >
                       <Upload className="w-4 h-4" />
-                      <span>Nhập nhiều bài nộp HS (.pdfedu)</span>
+                      <span>Nhập nhiều bài nộp PDF (.pdf)</span>
                     </button>
                     <button
                       type="button"
@@ -2791,7 +2953,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                   </div>
                   {filteredSubmissions.length === 0 ? (
                     <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-[14px] text-slate-500 text-center">
-                      Chưa có bài nộp học sinh nào. Nhấn nút phía trên để nhập 1 hoặc nhiều tệp .pdfedu.
+                      Chưa có bài nộp học sinh nào. Nhấn nút phía trên để nhập 1 hoặc nhiều tệp PDF (*.pdf).
                     </div>
                   ) : (
                     filteredSubmissions.map((sub) => {
@@ -3150,7 +3312,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       =================================================================== */}
       {tab === 'guide' && <InteractiveGuidePanel />}
 
-      {/* Hidden File Pickers */}
+      {/* Hidden File Pickers — strictly standard PDF (*.pdf, application/pdf) */}
       <input
         ref={authorPdfInputRef}
         type="file"
@@ -3164,22 +3326,22 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       <input
         ref={authorMasterInputRef}
         type="file"
-        accept=".pdfedu"
+        accept=".pdf,application/pdf"
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (f) handleExternalPackageFile(f);
+          if (f) handleExternalPackageFile(f, 'author');
           e.target.value = '';
         }}
       />
       <input
         ref={solvePackageInputRef}
         type="file"
-        accept=".pdfedu"
+        accept=".pdf,application/pdf"
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (f) handleExternalPackageFile(f);
+          if (f) handleExternalPackageFile(f, 'solve');
           e.target.value = '';
         }}
       />
@@ -3187,7 +3349,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
         ref={gradeSubmissionsInputRef}
         type="file"
         multiple
-        accept=".pdfedu"
+        accept=".pdf,application/pdf"
         className="hidden"
         onChange={(e) => {
           if (e.target.files) importStudentSubmissionFiles(e.target.files);
@@ -3197,11 +3359,11 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       <input
         ref={gradeMasterInputRef}
         type="file"
-        accept=".pdfedu"
+        accept=".pdf,application/pdf"
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
-          if (f) handleExternalPackageFile(f);
+          if (f) handleExternalPackageFile(f, 'grade');
           e.target.value = '';
         }}
       />

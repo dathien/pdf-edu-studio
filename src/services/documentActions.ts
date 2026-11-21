@@ -32,36 +32,47 @@ export async function openFilesInStudio(files: FileList | File[]): Promise<void>
   try {
     for (const file of list) {
       const lower = file.name.toLowerCase();
-      if (lower.endsWith('.pdfedu')) {
-        const { peekPdfEduPackageKind } = await import('../features/interactive/interactiveEngine');
-        const pkgKind = await peekPdfEduPackageKind(file);
-        if (pkgKind === 'worksheet' || pkgKind === 'submission' || pkgKind === 'teacher-master') {
-          const targetTab =
-            pkgKind === 'worksheet'
-              ? 'solve'
-              : pkgKind === 'submission'
-                ? 'grade'
-                : 'author';
-          store.openInteractive(targetTab, file);
+      if (lower.endsWith('.pdf') || file.type === 'application/pdf') {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const { peekPdfInteractiveKind } = await import('../features/interactive/interactiveEngine');
+        const pkgKind = await peekPdfInteractiveKind(bytes);
+
+        if (pkgKind === 'worksheet' || pkgKind === 'submission') {
+          store.openInteractive('solve', file);
           continue;
         }
-        const { loadProjectBundle } = await loadPdfEngine();
-        const loaded = await loadProjectBundle(file);
-        store.openDocument({
-          title: loaded.title,
-          fileName: loaded.fileName,
-          pdfBytes: loaded.pdfBytes,
-          pages: loaded.pages,
-          objects: loaded.objects,
-          grading: loaded.grading,
-          watermark: loaded.watermark,
-          pageNumbers: loaded.pageNumbers,
-          subjectHint: loaded.subjectHint,
-        });
-        store.notify(`Đã mở dự án "${loaded.title}"`, 'success');
-      } else if (lower.endsWith('.pdf') || file.type === 'application/pdf') {
+        if (pkgKind === 'teacher-master') {
+          store.openInteractive('author', file);
+          continue;
+        }
+        if (pkgKind === 'studio-project') {
+          const { loadEditableStudioPdf, inspectPdfBytes } = await loadPdfEngine();
+          const loaded = await loadEditableStudioPdf(bytes, file.name);
+          if (loaded) {
+            const pages =
+              loaded.pages && loaded.pages.length > 0
+                ? loaded.pages
+                : (await inspectPdfBytes(loaded.pdfBytes)).pages;
+            store.openDocument({
+              title: loaded.title,
+              fileName: loaded.fileName,
+              pdfBytes: loaded.pdfBytes,
+              pages,
+              objects: loaded.objects,
+              grading: loaded.grading,
+              watermark: loaded.watermark,
+              pageNumbers: loaded.pageNumbers,
+              subjectHint: loaded.subjectHint,
+            });
+            store.notify(
+              `Đã mở "${loaded.title}" và khôi phục lớp chỉnh sửa nhúng trong tệp PDF.`,
+              'success'
+            );
+            continue;
+          }
+        }
+
         const { inspectPdfBytes } = await loadPdfEngine();
-        const bytes = new Uint8Array(await file.arrayBuffer());
         const inspected = await inspectPdfBytes(bytes);
         const title = file.name.replace(/\.pdf$/i, '');
         store.openDocument({
@@ -75,7 +86,10 @@ export async function openFilesInStudio(files: FileList | File[]): Promise<void>
       } else if (file.type.startsWith('image/')) {
         await insertImageFileToActiveDoc(file);
       } else {
-        store.notify(`Định dạng "${file.name}" chưa được hỗ trợ trực tiếp.`, 'warning');
+        store.notify(
+          `Định dạng "${file.name}" không được hỗ trợ. Vui lòng chọn tệp PDF (*.pdf).`,
+          'warning'
+        );
       }
     }
   } catch (err) {
@@ -353,24 +367,27 @@ export async function quickSavePdf(doc: StudioDocument, saveAsNew = false): Prom
   }
 }
 
-export async function quickSaveProjectBundle(doc: StudioDocument): Promise<void> {
+export async function quickSaveEditablePdf(doc: StudioDocument): Promise<void> {
   const store = useStudioStore.getState();
-  store.setBusy('Đang đóng gói dự án .pdfedu...');
+  store.setBusy('Đang lưu tệp PDF chuẩn kèm dữ liệu chỉnh sửa tiếp...');
   try {
-    const { saveProjectBundle, triggerDownload } = await loadPdfEngine();
-    const blob = await saveProjectBundle(doc);
-    const outName = `${doc.fileName.replace(/\.pdf$/i, '')}.pdfedu`;
-    triggerDownload(blob, outName);
+    const { saveEditableStudioPdf, triggerDownload } = await loadPdfEngine();
+    const bytes = await saveEditableStudioPdf(doc);
+    const outName = `${doc.fileName.replace(/\.pdf$/i, '')}_sua_tiep.pdf`;
+    triggerDownload(new Blob([new Uint8Array(bytes)], { type: 'application/pdf' }), outName);
     store.markDocSaved(doc.id);
-    store.notify(`Đã lưu dự án "${outName}" (có thể mở lại để sửa mọi công thức, hình vẽ, điểm số).`, 'success');
+    store.notify(
+      `Đã lưu "${outName}" (xem đầy đủ trên mọi trình đọc PDF và mở lại để chỉnh sửa tiếp trong PDF EDU STUDIO).`,
+      'success'
+    );
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     store.setPdfError({
-      title: 'Không thể lưu dự án .pdfedu',
-      message: 'Không thể đóng gói dự án. Vui lòng thử lại.',
+      title: 'Không thể lưu tệp PDF chỉnh sửa tiếp',
+      message: 'Không thể tạo tệp PDF. Vui lòng thử lại.',
       detail,
       onRetry: () => {
-        quickSaveProjectBundle(doc);
+        quickSaveEditablePdf(doc);
       },
     });
   } finally {

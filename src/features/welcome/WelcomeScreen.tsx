@@ -264,7 +264,7 @@ export const WelcomeScreen: React.FC = () => {
                 Kéo thả tệp PDF vào đây
               </div>
               <p className="text-[15px] text-slate-600 mt-1">
-                Hỗ trợ tệp <strong>.pdf</strong> và dự án <strong>.pdfedu</strong>
+                Hỗ trợ tệp <strong>PDF (*.pdf)</strong> chuẩn
               </p>
               <button
                 type="button"
@@ -760,7 +760,7 @@ export const WelcomeScreen: React.FC = () => {
       <input
         ref={singleOpenRef}
         type="file"
-        accept=".pdf,.pdfedu,application/pdf"
+        accept=".pdf,application/pdf"
         className="hidden"
         onChange={(e) => {
           if (e.target.files) {
@@ -773,7 +773,7 @@ export const WelcomeScreen: React.FC = () => {
         ref={multiOpenRef}
         type="file"
         multiple
-        accept=".pdf,.pdfedu,application/pdf"
+        accept=".pdf,application/pdf"
         className="hidden"
         onChange={(e) => {
           if (e.target.files) {

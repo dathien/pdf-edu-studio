@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useStudioStore } from '../stores/useStudioStore';
-import { quickSavePdf, quickSaveProjectBundle } from '../services/documentActions';
+import { quickSavePdf, quickSaveEditablePdf } from '../services/documentActions';
 
 function isTypingContext(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
@@ -47,7 +47,7 @@ export function useKeyboardShortcuts(onTriggerOpenFile: () => void) {
         if (key === 's' && activeDoc) {
           e.preventDefault();
           if (e.shiftKey) {
-            quickSaveProjectBundle(activeDoc);
+            quickSaveEditablePdf(activeDoc);
           } else {
             quickSavePdf(activeDoc, false);
           }
