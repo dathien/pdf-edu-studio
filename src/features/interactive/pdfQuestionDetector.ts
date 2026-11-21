@@ -37,6 +37,137 @@ export interface PdfDetectionResult {
   notes: string[];
 }
 
+export interface PageSelectionValidationResult {
+  valid: boolean;
+  pages: number[];
+  summaryText: string;
+  errorMessage?: string;
+}
+
+/**
+ * Formats 1-based page numbers into warm, readable Vietnamese for teachers.
+ * Example: [2, 3] -> "Từ trang 2 đến trang 3"; [2] -> "Trang 2";
+ * [2, 3, 7, 8, 9] -> "Từ trang 2 đến trang 3, từ trang 7 đến trang 9".
+ */
+export function formatSelectedPagesVi(pages: number[]): string {
+  if (!pages || pages.length === 0) return 'Chưa chọn trang nào';
+  const sorted = Array.from(new Set(pages)).sort((a, b) => a - b);
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (const p of sorted) {
+    const last = ranges[ranges.length - 1];
+    if (last && p === last.end + 1) {
+      last.end = p;
+    } else {
+      ranges.push({ start: p, end: p });
+    }
+  }
+  return ranges
+    .map((r, idx) => {
+      if (r.start === r.end) {
+        return idx === 0 ? `Trang ${r.start}` : `trang ${r.start}`;
+      }
+      return idx === 0
+        ? `Từ trang ${r.start} đến trang ${r.end}`
+        : `từ trang ${r.start} đến trang ${r.end}`;
+    })
+    .join(', ');
+}
+
+/**
+ * Strict, teacher-friendly validation of page selection specifications.
+ * Returns actionable plain-Vietnamese errors when numbers are out of range or malformed.
+ */
+export function validatePageSelectionSpec(
+  spec: string,
+  totalPages: number
+): PageSelectionValidationResult {
+  const maxPage = Math.max(1, Math.floor(totalPages));
+  const raw = spec.trim();
+  if (!raw || /^(all|tất cả|tat ca|\*)$/i.test(raw)) {
+    const allPages = Array.from({ length: maxPage }, (_, i) => i + 1);
+    return {
+      valid: true,
+      pages: allPages,
+      summaryText:
+        maxPage === 1 ? 'Trang 1' : `Toàn bộ tài liệu (Từ trang 1 đến trang ${maxPage})`,
+    };
+  }
+
+  const set = new Set<number>();
+  const parts = raw
+    .split(/[;,]+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return {
+      valid: false,
+      pages: [],
+      summaryText: '',
+      errorMessage: `Tài liệu có ${maxPage} trang. Thầy cô vui lòng chọn trang từ 1 đến ${maxPage}.`,
+    };
+  }
+
+  for (const p of parts) {
+    const rangeMatch = p.match(/^(\d+)\s*[-–—]\s*(\d+)$/);
+    if (rangeMatch) {
+      const a = Number(rangeMatch[1]);
+      const b = Number(rangeMatch[2]);
+      if (a < 1 || b < 1 || a > maxPage || b > maxPage) {
+        return {
+          valid: false,
+          pages: [],
+          summaryText: '',
+          errorMessage: `Tài liệu có ${maxPage} trang. Thầy cô vui lòng chọn trang từ 1 đến ${maxPage}.`,
+        };
+      }
+      if (a > b) {
+        return {
+          valid: false,
+          pages: [],
+          summaryText: '',
+          errorMessage: `Trang bắt đầu (${a}) đang lớn hơn trang kết thúc (${b}). Thầy cô hãy nhập lại, ví dụ: ${b}-${a}.`,
+        };
+      }
+      for (let i = a; i <= b; i++) set.add(i);
+      continue;
+    }
+
+    if (/^\d+$/.test(p)) {
+      const num = Number(p);
+      if (num < 1 || num > maxPage) {
+        return {
+          valid: false,
+          pages: [],
+          summaryText: '',
+          errorMessage: `Tài liệu có ${maxPage} trang. Thầy cô vui lòng chọn trang từ 1 đến ${maxPage}.`,
+        };
+      }
+      set.add(num);
+      continue;
+    }
+
+    return {
+      valid: false,
+      pages: [],
+      summaryText: '',
+      errorMessage:
+        'Cách nhập số trang chưa đúng. Thầy cô hãy nhập 1 trang (ví dụ: 2), khoảng trang (ví dụ: 2-3) hoặc nhiều trang (ví dụ: 2, 3, 7-9).',
+    };
+  }
+
+  const pages = Array.from(set).sort((a, b) => a - b);
+  return {
+    valid: pages.length > 0,
+    pages,
+    summaryText: formatSelectedPagesVi(pages),
+    errorMessage:
+      pages.length === 0
+        ? `Tài liệu có ${maxPage} trang. Thầy cô vui lòng chọn trang từ 1 đến ${maxPage}.`
+        : undefined,
+  };
+}
+
 /**
  * Parses flexible page specifications:
  * - "all" or "" -> all pages [1..totalPages]
@@ -45,6 +176,8 @@ export interface PdfDetectionResult {
  * - "2, 3, 7-9" -> [2, 3, 7, 8, 9]
  */
 export function parsePageSelectionSpec(spec: string, totalPages: number): number[] {
+  const checked = validatePageSelectionSpec(spec, totalPages);
+  if (checked.valid) return checked.pages;
   const cleaned = spec.trim().toLowerCase();
   if (!cleaned || cleaned === 'all' || cleaned === 'tất cả') {
     return Array.from({ length: totalPages }, (_, i) => i + 1);
@@ -160,7 +293,7 @@ interface QuestionCluster {
 }
 
 const QUESTION_START_RE =
-  /^(?:C[âa]u\s*\d+[a-z]?|B[àa]i\s*\d+[a-z]?|Task\s*\d+|Question\s*\d+|\d+\s*[\.\)])(?:\s*[:\.\-–)]|\s|$)/i;
+  /^(?:C[âa]u\s*\d+[a-z]?|B[àa]i\s*(?:t[ậa]p\s*)?\d+[a-z]?|Ho[ạa]t\s*[đd][ộo]ng\s*\d+|Luy[ệe]n\s*t[ậa]p\s*\d+|V[ậa]n\s*d[ụu]ng\s*\d+|Task\s*\d+|Question\s*\d+|\d+\s*[\.\)])(?:\s*[:\.\-–)]|\s|$)/i;
 
 const LESSON_HEADING_RE =
   /^(?:B[àa]i\s+\d+\s*[:\.\-–]|Ch[ủu]\s*[đd][ềe]\s*\d+|Ch[ươu][ơo]ng\s+\d+|PH[ẦA]N\s+[IVX\d]+|PHI[ẾE]U\s+B[ÀA]I\s+T[ẬA]P)/i;
@@ -211,7 +344,7 @@ function classifyQuestionCluster(
     return {
       type: 'tf',
       needsReview: stmts.length < 2,
-      detectionNote: 'Nhận diện dấu hiệu bảng / phát biểu Đúng – Sai. Giáo viên cần nhập đáp án chuẩn.',
+      detectionNote: 'Ứng dụng nhận ra câu hỏi Đúng – Sai. Thầy cô hãy kiểm tra lại các ý và chọn đáp án đúng.',
       extractedTfStatements: stmts,
     };
   }
@@ -259,7 +392,7 @@ function classifyQuestionCluster(
         matchingMode: isDrag ? 'drag' : 'line',
         needsReview: true,
         detectionNote:
-          'Phát hiện yêu cầu ghép đôi nhưng cần giáo viên rà soát lại danh sách mục cột A / cột B và đáp án.',
+          'Ứng dụng nhận ra câu hỏi Ghép đôi. Thầy cô hãy kiểm tra lại các mục ở Cột A, Cột B và chọn cặp nối đúng.',
         extractedMatching: {
           itemsA:
             itemsA.length >= 2
@@ -285,7 +418,7 @@ function classifyQuestionCluster(
       type: 'matching',
       matchingMode: isDrag ? 'drag' : 'line',
       needsReview: true,
-      detectionNote: `Nhận diện 2 cột ghép đôi (${itemsA.length} mục A, ${itemsB.length} mục B). Giáo viên cần kiểm tra và gán cặp đáp án đúng.`,
+      detectionNote: `Ứng dụng tìm thấy ${itemsA.length} mục ở Cột A và ${itemsB.length} mục ở Cột B. Thầy cô hãy kiểm tra và chọn cặp nối đúng.`,
       extractedMatching: { itemsA, itemsB },
     };
   }
@@ -300,7 +433,7 @@ function classifyQuestionCluster(
     return {
       type: 'ordering',
       needsReview: true,
-      detectionNote: 'Nhận diện dạng sắp xếp trình tự. Cần giáo viên xác nhận thứ tự chuẩn.',
+      detectionNote: 'Ứng dụng nhận ra câu hỏi Sắp xếp thứ tự. Thầy cô hãy kiểm tra lại các bước và thứ tự đúng.',
       extractedOrdering:
         items.length >= 2
           ? items
@@ -313,9 +446,9 @@ function classifyQuestionCluster(
   }
 
   // 4. Multiple-choice (Single vs Multi-select checkboxes)
-  const hasCheckbox = /[☐□▢\[\]\s]{2}|chọn\s+các\s+đáp\s+án|nhiều\s+đáp\s+án|tất\s+cả\s+các\s+phương\s+án/i.test(text);
+  const hasCheckbox = /[☐□▢◯○]|\[ ?\]|\( ?\)|chọn\s+các\s+đáp\s+án|nhiều\s+đáp\s+án|tất\s+cả\s+các\s+phương\s+án/i.test(text);
   const optMatches = [...text.matchAll(/(?:^|\s)([A-D])[\.\)]\s*([^\nA-D]{1,120})/g)];
-  if (optMatches.length >= 2 || /(khoanh\s+tròn|chọn\s+đáp\s+án|chọn\s+chữ\s+cái|đánh\s+dấu\s+x)/i.test(lower)) {
+  if (optMatches.length >= 2 || /(khoanh\s+tròn|chọn\s+đáp\s+án|chọn\s+chữ\s+cái|đánh\s+dấu\s+x|tích\s+vào\s+ô)/i.test(lower)) {
     const opts =
       optMatches.length >= 2
         ? optMatches.slice(0, 4).map((m) => ({
@@ -333,18 +466,18 @@ function classifyQuestionCluster(
       type: hasCheckbox ? 'mcq_multi' : 'mcq',
       needsReview: optMatches.length < 3,
       detectionNote: hasCheckbox
-        ? 'Nhận diện ô chọn nhiều đáp án. Giáo viên cần xác nhận các đáp án đúng.'
-        : 'Nhận diện câu trắc nghiệm A/B/C/D. Giáo viên cần chọn đáp án đúng.',
+        ? 'Ứng dụng nhận ra câu hỏi chọn nhiều đáp án. Thầy cô hãy chọn các đáp án đúng.'
+        : 'Ứng dụng nhận ra câu trắc nghiệm A, B, C, D. Thầy cô hãy chọn đáp án đúng.',
       extractedOptions: opts,
     };
   }
 
   // 5. Fill-in-the-blank
-  if (/(điền\s+vào\s+chỗ|điền\s+từ|điền\s+hệ\s+số|điền\s+khuyết|fill\s+in\s+the\s+blank|_{3,}|\.{5,})/i.test(lower)) {
+  if (/(điền\s+vào\s+chỗ|điền\s+từ|điền\s+số|điền\s+hệ\s+số|điền\s+khuyết|fill\s+in\s+the\s+blank|_{3,}|\.{5,}|…{2,})/i.test(lower)) {
     const slots: Array<{ id: string; prefix: string; suffix: string }> = [];
-    const blankLines = cluster.lines.filter((l) => /_{3,}|\.{4,}/.test(l.text));
+    const blankLines = cluster.lines.filter((l) => /_{3,}|\.{4,}|…{2,}/.test(l.text));
     blankLines.slice(0, 4).forEach((ln, idx) => {
-      const parts = ln.text.split(/_{3,}|\.{4,}/);
+      const parts = ln.text.split(/_{3,}|\.{4,}|…{2,}/);
       slots.push({
         id: `fb-${idx + 1}`,
         prefix: (parts[0] || '').trim().slice(-45),
@@ -352,12 +485,12 @@ function classifyQuestionCluster(
       });
     });
     if (slots.length === 0) {
-      slots.push({ id: 'fb-1', prefix: 'Ô trống 1:', suffix: '' });
+      slots.push({ id: 'fb-1', prefix: 'Chỗ trống 1:', suffix: '' });
     }
     return {
       type: 'fill_blank',
       needsReview: true,
-      detectionNote: 'Nhận diện vùng điền khuyết. Giáo viên cần nhập đáp án chuẩn cho từng ô trống.',
+      detectionNote: 'Ứng dụng nhận ra câu hỏi Điền vào chỗ trống. Thầy cô hãy nhập đáp án đúng cho từng ô.',
       extractedFillBlanks: slots,
     };
   }
@@ -367,7 +500,7 @@ function classifyQuestionCluster(
     return {
       type: 'diagram_label',
       needsReview: true,
-      detectionNote: 'Nhận diện yêu cầu chú thích hình / sơ đồ / bản đồ. Cần giáo viên đặt lại vị trí nhãn nếu cần.',
+      detectionNote: 'Ứng dụng nhận ra câu hỏi Chú thích hình hoặc sơ đồ. Thầy cô hãy kiểm tra lại vị trí trả lời.',
     };
   }
 
@@ -376,7 +509,7 @@ function classifyQuestionCluster(
     return {
       type: 'formula',
       needsReview: true,
-      detectionNote: 'Nhận diện yêu cầu nhập công thức khoa học (MathLive). Giáo viên chấm thủ công.',
+      detectionNote: 'Ứng dụng nhận ra câu hỏi Nhập công thức (giáo viên chấm điểm sau khi học sinh nộp bài).',
     };
   }
 
@@ -385,7 +518,7 @@ function classifyQuestionCluster(
     return {
       type: 'drawing',
       needsReview: true,
-      detectionNote: 'Nhận diện yêu cầu vẽ hình / viết tay trên PDF. Giáo viên kiểm tra kích thước vùng vẽ.',
+      detectionNote: 'Ứng dụng nhận ra câu hỏi Vẽ hình hoặc viết tay. Thầy cô hãy kiểm tra lại khung vẽ.',
     };
   }
 
@@ -394,7 +527,7 @@ function classifyQuestionCluster(
     return {
       type: 'reading',
       needsReview: true,
-      detectionNote: 'Nhận diện bài đọc hiểu. Giáo viên cần rà soát các câu hỏi con và đáp án.',
+      detectionNote: 'Ứng dụng nhận ra bài Đọc hiểu. Thầy cô hãy kiểm tra lại các câu hỏi con và đáp án.',
     };
   }
 
@@ -403,7 +536,7 @@ function classifyQuestionCluster(
     return {
       type: 'number',
       needsReview: true,
-      detectionNote: 'Nhận diện câu hỏi nhập giá trị số. Giáo viên cần nhập đáp số và sai số cho phép.',
+      detectionNote: 'Ứng dụng nhận ra câu hỏi Nhập số. Thầy cô hãy nhập đáp số đúng.',
     };
   }
 
@@ -412,7 +545,7 @@ function classifyQuestionCluster(
     return {
       type: 'attachment',
       needsReview: true,
-      detectionNote: 'Nhận diện bài thực hành nộp tệp đính kèm.',
+      detectionNote: 'Ứng dụng nhận ra bài thực hành cho phép học sinh gửi kèm ảnh hoặc tệp.',
     };
   }
 
@@ -420,7 +553,7 @@ function classifyQuestionCluster(
   return {
     type: 'essay',
     needsReview: true,
-    detectionNote: 'Đề xuất vùng tự luận (cần giáo viên kiểm tra lại loại câu hỏi nếu cần).',
+    detectionNote: 'Ứng dụng tạm đặt khung Tự luận để học sinh viết câu trả lời. Thầy cô có thể đổi loại câu hỏi nếu cần.',
   };
 }
 
@@ -613,16 +746,18 @@ export async function detectQuestionsFromPdfPages(
 
     if (scannedPageNumbers.length > 0) {
       notes.push(
-        `Phát hiện ${scannedPageNumbers.length} trang PDF dạng ảnh scan hoặc ít lớp văn bản (Trang PDF: ${scannedPageNumbers.join(', ')}). Giáo viên có thể dùng công cụ OCR có sẵn của Studio hoặc đặt vùng câu hỏi thủ công trên các trang này.`
+        scannedPageNumbers.length === totalPages
+          ? 'Ứng dụng chưa tìm được tất cả chỗ trả lời vì tài liệu này là trang hình ảnh. Thầy cô có thể bổ sung trực tiếp bằng nút Thêm câu hỏi.'
+          : `Một số trang là hình ảnh (Trang ${scannedPageNumbers.join(', ')}) nên ứng dụng chưa tìm được hết chỗ trả lời. Thầy cô có thể bổ sung bằng nút Thêm câu hỏi.`
       );
     }
     if (detectedQuestions.length === 0) {
       notes.push(
-        'Chưa tìm thấy mẫu đánh số câu hỏi rõ ràng (Câu 1, Bài 1, Task 1...). Giáo viên có thể chọn dạng câu hỏi ở thanh công cụ và nhấp trực tiếp lên trang PDF để đặt vùng.'
+        'Ứng dụng chưa tìm được chỗ trả lời trong các trang này. Thầy cô có thể bổ sung bằng nút Thêm câu hỏi rồi nhấn trực tiếp lên trang PDF.'
       );
     } else {
       notes.push(
-        `Đã đề xuất ${detectedQuestions.length} vùng câu hỏi từ lớp văn bản PDF. Hệ thống không tự đoán đáp án đúng — giáo viên cần kiểm tra, xác nhận vùng và nhập đáp án.`
+        `Đã tìm thấy ${detectedQuestions.length} câu hỏi. Thầy cô hãy kiểm tra trước khi giao bài.`
       );
     }
 

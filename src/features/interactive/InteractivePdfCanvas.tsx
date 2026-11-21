@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertCircle, Loader2, ZoomIn, ZoomOut } from 'lucide-react';
+import { AlertCircle, FileText, Loader2, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { openPdfDocument, type LoadedPdfHandle } from '../../engines/pdf/pdfEngine';
 import { QuestionRegionWidget } from './QuestionRegionWidget';
 import type {
@@ -29,6 +29,7 @@ interface InteractivePdfCanvasProps {
   sourcePdfPages?: number[];
   printedPageLabels?: string[];
   scrollToQuestionNonce?: number;
+  onCancelPlacing?: () => void;
   onSelectQuestion?: (id: string | null) => void;
   onPlaceAtPoint?: (pageIndex: number, pdfX: number, pdfY: number) => void;
   onUpdateRegion?: (qId: string, patch: Partial<InteractiveQuestion['region']>) => void;
@@ -116,14 +117,14 @@ const SinglePdfPageCanvas: React.FC<{
   const cssH = Math.round(dim.height * zoom);
 
   return (
-    <div className="flex flex-col items-center gap-1.5">
-      <div className="flex items-center gap-2 text-[14px] font-semibold text-slate-700">
-        <span className="px-2.5 py-0.5 rounded-md bg-white border border-slate-300 text-[#164E63]">
-          Trang PDF {sourcePdfPageNum ?? dim.pageIndex + 1}
+    <div className="flex flex-col items-center gap-2">
+      <div className="flex items-center gap-2 text-[15px] font-semibold text-slate-700">
+        <span className="px-3 py-1 rounded-lg bg-white border border-slate-300 text-[#164E63]">
+          Trang {sourcePdfPageNum ?? dim.pageIndex + 1}
         </span>
-        {printedPageLabel && (
-          <span className="px-2.5 py-0.5 rounded-md bg-[#E6F1EF] border border-teal-200 text-[#087F70]">
-            Trang in trên tài liệu: {printedPageLabel}
+        {printedPageLabel && printedPageLabel !== String(sourcePdfPageNum ?? dim.pageIndex + 1) && (
+          <span className="px-3 py-1 rounded-lg bg-[#E6F1EF] border border-teal-200 text-[#087F70]">
+            Số trang in trên giấy: {printedPageLabel}
           </span>
         )}
       </div>
@@ -189,6 +190,7 @@ export const InteractivePdfCanvas: React.FC<InteractivePdfCanvasProps> = ({
   sourcePdfPages,
   printedPageLabels,
   scrollToQuestionNonce,
+  onCancelPlacing,
   onSelectQuestion,
   onPlaceAtPoint,
   onUpdateRegion,
@@ -260,69 +262,97 @@ export const InteractivePdfCanvas: React.FC<InteractivePdfCanvasProps> = ({
   return (
     <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#E6EFEF]">
       {/* Canvas Zoom & Placement Banner */}
-      <div className="px-4 py-2 bg-white border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap shrink-0">
-        <div className="flex items-center gap-2 text-[14.5px] font-medium text-slate-700">
+      <div className="px-4 py-2.5 bg-white border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap shrink-0">
+        <div className="flex items-center gap-2.5 text-[16px] font-medium text-slate-800 flex-wrap">
           {placingTypeLabel ? (
-            <span className="px-3 py-1 rounded-lg bg-teal-50 border border-[#087F70] text-[#164E63] font-semibold">
-              Nhấp vào vị trí bất kỳ trên trang PDF để đặt khung: {placingTypeLabel}
-            </span>
+            <div className="flex items-center gap-2.5 flex-wrap px-3.5 py-2 rounded-xl bg-teal-50 border-2 border-[#087F70] text-[#164E63] font-semibold">
+              <span>
+                Nhấn vào vị trí cần trả lời trên trang PDF để thêm: <strong>{placingTypeLabel}</strong>
+              </span>
+              {onCancelPlacing && (
+                <button
+                  type="button"
+                  onClick={onCancelPlacing}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 min-h-[38px] rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-slate-800 text-[15px] font-bold cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                  <span>Hủy</span>
+                </button>
+              )}
+            </div>
+          ) : pageDims.length > 0 ? (
+            mode === 'author' && questions.length === 0 ? (
+              <span className="text-slate-700 font-semibold">
+                {pageDims.length} trang · Chưa tạo bài tập. Thầy cô hãy nhấn <strong>Tạo bài tập tự động</strong>.
+              </span>
+            ) : (
+              <span className="text-[#164E63] font-semibold">
+                Đang hiển thị {pageDims.length} trang · {questions.length} câu hỏi
+              </span>
+            )
           ) : (
-            <span>
-              {pageDims.length > 0
-                ? `${pageDims.length} trang PDF · ${questions.length} vùng câu hỏi tương tác`
-                : 'Chưa nạp tài liệu PDF'}
-            </span>
+            <span className="text-slate-600">Chưa mở tài liệu PDF</span>
           )}
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => setZoom((z) => Math.max(0.65, Math.round((z - 0.15) * 100) / 100))}
-            className="p-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 cursor-pointer"
-            title="Thu nhỏ"
+            className="inline-flex items-center gap-1.5 px-3 min-h-[44px] rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-[15px] font-semibold cursor-pointer"
+            title="Thu nhỏ trang PDF"
           >
             <ZoomOut className="w-4 h-4" />
+            <span className="hidden sm:inline">Thu nhỏ</span>
           </button>
-          <span className="min-w-[58px] text-center text-[14.5px] font-semibold text-[#164E63] tabular-nums">
+          <span className="min-w-[60px] text-center text-[16px] font-bold text-[#164E63] tabular-nums">
             {Math.round(zoom * 100)}%
           </span>
           <button
             type="button"
-            onClick={() => setZoom((z) => Math.min(1.75, Math.round((z + 0.15) * 100) / 100))}
-            className="p-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 cursor-pointer"
-            title="Phóng to"
+            onClick={() => setZoom((z) => Math.min(1.85, Math.round((z + 0.15) * 100) / 100))}
+            className="inline-flex items-center gap-1.5 px-3 min-h-[44px] rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-[15px] font-semibold cursor-pointer"
+            title="Phóng to trang PDF"
           >
             <ZoomIn className="w-4 h-4" />
+            <span className="hidden sm:inline">Phóng to</span>
           </button>
           <button
             type="button"
             onClick={() => setZoom(1.15)}
-            className="px-2.5 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-[13.5px] font-semibold text-slate-700 cursor-pointer"
+            className="px-3 min-h-[44px] rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-[15px] font-semibold text-slate-800 cursor-pointer"
           >
-            115%
+            Vừa mắt
           </button>
         </div>
       </div>
 
       {/* Scrollable Multi-Page PDF Viewport */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-auto p-5">
+      <div ref={scrollContainerRef} className="flex-1 overflow-auto p-6">
         {loading ? (
           <div className="h-full flex items-center justify-center">
-            <div className="bg-white rounded-xl px-5 py-4 shadow-md flex items-center gap-3 text-[15.5px] font-semibold text-[#164E63]">
-              <Loader2 className="w-5 h-5 animate-spin text-[#087F70]" />
-              <span>Đang tải các trang PDF...</span>
+            <div className="bg-white rounded-xl px-6 py-5 shadow-md flex items-center gap-3 text-[17px] font-semibold text-[#164E63]">
+              <Loader2 className="w-6 h-6 animate-spin text-[#087F70]" />
+              <span>Đang mở tài liệu PDF. Thầy cô vui lòng chờ...</span>
             </div>
           </div>
         ) : error ? (
-          <div className="max-w-md mx-auto mt-12 bg-white rounded-xl border border-red-200 p-5 text-center space-y-2">
-            <AlertCircle className="w-8 h-8 text-red-600 mx-auto" />
-            <div className="text-[16px] font-bold text-red-700">Không thể hiển thị PDF</div>
-            <p className="text-[14.5px] text-slate-600">{error}</p>
+          <div className="max-w-lg mx-auto mt-12 bg-white rounded-2xl border border-red-200 p-6 text-center space-y-3">
+            <AlertCircle className="w-9 h-9 text-red-600 mx-auto" />
+            <div className="text-[19px] font-bold text-red-700">Không thể hiển thị tài liệu PDF</div>
+            <p className="text-[16px] text-slate-700 leading-relaxed">{error}</p>
           </div>
         ) : !handle ? (
-          <div className="h-full flex items-center justify-center text-slate-500 text-[15.5px]">
-            Chọn tệp PDF hoặc mẫu môn học để bắt đầu.
+          <div className="h-full flex items-center justify-center">
+            <div className="max-w-md bg-white rounded-2xl border border-slate-200 p-8 text-center space-y-3 shadow-2xs">
+              <FileText className="w-11 h-11 text-[#087F70] mx-auto" />
+              <div className="text-[20px] font-bold text-[#164E63]">
+                Chưa có tài liệu PDF nào đang mở
+              </div>
+              <p className="text-[16px] text-slate-700 leading-relaxed">
+                Thầy cô hãy nhấn nút <strong>Tải PDF</strong> ở khung bên trái để chọn tài liệu từ máy tính.
+              </p>
+            </div>
           </div>
         ) : (
           <div className="flex flex-col items-center gap-6 pb-10">

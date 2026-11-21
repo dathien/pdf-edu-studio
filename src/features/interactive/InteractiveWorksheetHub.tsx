@@ -2,9 +2,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   ArrowLeft,
+  ArrowRight,
   BookOpen,
   Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   ClipboardCheck,
   Download,
   Edit3,
@@ -16,6 +19,7 @@ import {
   Globe,
   GraduationCap,
   HardDrive,
+  HelpCircle,
   Info,
   ListChecks,
   Loader2,
@@ -23,11 +27,11 @@ import {
   Plus,
   RotateCcw,
   Save,
-  Scissors,
   Send,
   Sparkles,
   Trash2,
   Upload,
+  X,
   XCircle,
 } from 'lucide-react';
 import { useStudioStore } from '../../stores/useStudioStore';
@@ -52,8 +56,9 @@ import { interactiveStorage } from './interactiveStorage';
 import {
   detectQuestionsFromPdfPages,
   extractSelectedPagesPdf,
+  formatSelectedPagesVi,
   inspectPdfForPageSelection,
-  parsePageSelectionSpec,
+  validatePageSelectionSpec,
 } from './pdfQuestionDetector';
 import {
   buildInteractiveSubjectTemplate,
@@ -380,7 +385,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
   const [storageUsage, setStorageUsage] = useState<{ usedMB: number; quotaMB: number } | null>(null);
   const [quotaBanner, setQuotaBanner] = useState<string | null>(null);
 
-  // ---- TAB 1: AUTHORING & TEACHER REVIEW STATE ----
+  // ---- TAB 1: AUTHORING & TEACHER REVIEW STATE (3-STEP GUIDED FLOW) ----
   const [authorWorksheet, setAuthorWorksheet] = useState<InteractiveWorksheet | null>(null);
   const [authorKeys, setAuthorKeys] = useState<TeacherAnswerKeyMap>({});
   const [authorPdfBytes, setAuthorPdfBytes] = useState<Uint8Array | null>(null);
@@ -394,17 +399,38 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       isLikelyScan: boolean;
     }>;
   } | null>(null);
+  const [authorStep, setAuthorStep] = useState<1 | 2 | 3>(1);
+  const [pageSelectMode, setPageSelectMode] = useState<'all' | 'range' | 'custom'>('all');
+  const [rangeStartPage, setRangeStartPage] = useState('1');
+  const [rangeEndPage, setRangeEndPage] = useState('1');
   const [pageSpecInput, setPageSpecInput] = useState('all');
+  const [appliedPageSpec, setAppliedPageSpec] = useState('all');
   const [firstPrintedPageInput, setFirstPrintedPageInput] = useState('');
   const [extractingPages, setExtractingPages] = useState(false);
   const [detectingQuestions, setDetectingQuestions] = useState(false);
   const [detectionNotes, setDetectionNotes] = useState<string[]>([]);
-  const [authorLeftTab, setAuthorLeftTab] = useState<'questions' | 'add' | 'source'>('source');
   const [selectedAuthorQId, setSelectedAuthorQId] = useState<string | null>(null);
+  const [editingQuestionSnapshot, setEditingQuestionSnapshot] = useState<{
+    question: InteractiveQuestion;
+    key: TeacherQuestionKey | undefined;
+  } | null>(null);
   const [authorScrollNonce, setAuthorScrollNonce] = useState(0);
   const [placingType, setPlacingType] = useState<InteractiveQuestionType | null>(null);
+  const [showAddQuestionMenu, setShowAddQuestionMenu] = useState(false);
+  const [showSampleDrawer, setShowSampleDrawer] = useState(false);
+  const [showMoreSettings, setShowMoreSettings] = useState(false);
+  const [confirmResetAuthor, setConfirmResetAuthor] = useState(false);
+  const [authorActionAlert, setAuthorActionAlert] = useState<{
+    title: string;
+    detail: string;
+    actionLabel: string;
+    onAction: () => void;
+  } | null>(null);
+  const [authorAutoSavedAt, setAuthorAutoSavedAt] = useState<number | null>(null);
+  const [justSavedStudentPdfName, setJustSavedStudentPdfName] = useState<string | null>(null);
   const [authorPreviewStudent, setAuthorPreviewStudent] = useState(false);
   const [authorPreviewAnswers, setAuthorPreviewAnswers] = useState<StudentAnswerMap>({});
+  const pageSpecInputRef = useRef<HTMLInputElement>(null);
 
   // ---- TAB 3: STUDENT SOLVING STATE ----
   const [solveDraftId, setSolveDraftId] = useState<string | null>(null);
@@ -553,10 +579,11 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
             setRawUploadedPdfBytes(parsed.pdfBytes);
             setRawPdfInfo(null);
             setDetectionNotes([]);
-            setSelectedAuthorQId(parsed.worksheet.questions[0]?.id || null);
-            setAuthorLeftTab('questions');
+            setSelectedAuthorQId(null);
+            setEditingQuestionSnapshot(null);
+            setAuthorStep(parsed.worksheet.questions.length > 0 ? 3 : 2);
             setInteractiveTab('author');
-            notify(`Đã nạp bản gốc giáo viên "${parsed.worksheet.title}".`, 'success');
+            notify(`Đã mở bản gốc giáo viên "${parsed.worksheet.title}".`, 'success');
           }
         } else if (parsed.kind === 'submission') {
           if (preferredMode === 'grade') {
@@ -629,6 +656,62 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
   // AUTHORING, PAGE SELECTION & AUTO-DETECTION ACTIONS
   // =========================================================================
 
+  const effectivePageSpec = useMemo(() => {
+    if (pageSelectMode === 'all') return 'all';
+    if (pageSelectMode === 'range') {
+      const s = rangeStartPage.trim();
+      const e = rangeEndPage.trim();
+      if (!s && !e) return '';
+      if (!e || s === e) return s;
+      return `${s}-${e}`;
+    }
+    return pageSpecInput;
+  }, [pageSelectMode, rangeStartPage, rangeEndPage, pageSpecInput]);
+
+  const pageValidation = useMemo(() => {
+    const total = rawPdfInfo?.totalPages || 1;
+    return validatePageSelectionSpec(effectivePageSpec, total);
+  }, [effectivePageSpec, rawPdfInfo]);
+
+  const openQuestionForEdit = (qId: string | null) => {
+    if (!qId || !authorWorksheet) {
+      setSelectedAuthorQId(null);
+      setEditingQuestionSnapshot(null);
+      return;
+    }
+    const found = authorWorksheet.questions.find((item) => item.id === qId);
+    if (!found) return;
+    setSelectedAuthorQId(qId);
+    setEditingQuestionSnapshot({
+      question: JSON.parse(JSON.stringify(found)) as InteractiveQuestion,
+      key: authorKeys[qId]
+        ? (JSON.parse(JSON.stringify(authorKeys[qId])) as TeacherQuestionKey)
+        : undefined,
+    });
+    setAuthorScrollNonce((n) => n + 1);
+    setAuthorActionAlert(null);
+  };
+
+  const cancelQuestionEdit = () => {
+    if (editingQuestionSnapshot && authorWorksheet) {
+      const snap = editingQuestionSnapshot;
+      setAuthorWorksheet({
+        ...authorWorksheet,
+        questions: authorWorksheet.questions.map((q) =>
+          q.id === snap.question.id ? snap.question : q
+        ),
+      });
+      setAuthorKeys((prev) => {
+        const next = { ...prev };
+        if (snap.key) next[snap.question.id] = snap.key;
+        else delete next[snap.question.id];
+        return next;
+      });
+    }
+    setSelectedAuthorQId(null);
+    setEditingQuestionSnapshot(null);
+  };
+
   const loadTemplateIntoAuthor = async (templateId: string) => {
     try {
       const built = await buildInteractiveSubjectTemplate(templateId);
@@ -638,14 +721,18 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       setRawUploadedPdfBytes(built.pdfBytes);
       setRawPdfInfo(null);
       setDetectionNotes([]);
-      setSelectedAuthorQId(built.worksheet.questions[0]?.id || null);
-      setAuthorLeftTab('questions');
+      setSelectedAuthorQId(null);
+      setEditingQuestionSnapshot(null);
+      setAuthorStep(3);
+      setShowSampleDrawer(false);
       setAuthorPreviewStudent(false);
       setAuthorPreviewAnswers({});
       setPlacingType(null);
-      notify(`Đã nạp mẫu tương tác "${built.worksheet.title}".`, 'success');
+      setAuthorActionAlert(null);
+      setJustSavedStudentPdfName(null);
+      notify(`Đã mở bài mẫu "${built.worksheet.title}". Thầy cô có thể kiểm tra và chỉnh sửa ngay.`, 'success');
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Không thể tạo mẫu bài tập.', 'error');
+      notify(err instanceof Error ? err.message : 'Không thể mở bài mẫu.', 'error');
     }
   };
 
@@ -664,6 +751,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       inspected = null;
     }
 
+    const totalPages = inspected?.totalPages || 1;
     const pageMapping: WorksheetPageMapping | undefined = inspected
       ? {
           sourcePdfPages: inspected.pages.map((p) => p.pdfPageNumber),
@@ -690,20 +778,35 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
     };
     setRawUploadedPdfBytes(bytes);
     setRawPdfInfo(inspected);
-    setPageSpecInput(inspected && inspected.totalPages > 6 ? '1-3' : 'all');
+    if (totalPages > 6) {
+      setPageSelectMode('range');
+      setRangeStartPage('1');
+      setRangeEndPage('2');
+      setPageSpecInput('1-2');
+    } else {
+      setPageSelectMode('all');
+      setRangeStartPage('1');
+      setRangeEndPage(String(totalPages));
+      setPageSpecInput('all');
+    }
+    setAppliedPageSpec('all');
     setFirstPrintedPageInput('');
     setAuthorWorksheet(ws);
     setAuthorKeys({});
     setAuthorPdfBytes(bytes);
     setDetectionNotes([]);
     setSelectedAuthorQId(null);
+    setEditingQuestionSnapshot(null);
     setAuthorPreviewStudent(false);
     setPlacingType(null);
-    setAuthorLeftTab('add');
+    setShowAddQuestionMenu(false);
+    setAuthorActionAlert(null);
+    setJustSavedStudentPdfName(null);
+    setAuthorStep(1);
     notify(
       inspected
-        ? `Đã nạp PDF "${title}" (${inspected.totalPages} trang). Chọn trang PDF cần giao rồi nhấn "Nhận diện bài tập" hoặc đặt vùng thủ công.`
-        : `Đã nạp PDF "${title}". Nhấn "Nhận diện bài tập" hoặc đặt vùng câu hỏi thủ công.`,
+        ? `Đã tải tệp "${title}" (${totalPages} trang). Thầy cô hãy chọn trang cần giao rồi nhấn Tiếp tục.`
+        : `Đã tải tệp "${title}". Thầy cô hãy nhấn Tiếp tục sang Bước 2 để tạo bài tập.`,
       'success'
     );
   };
@@ -715,7 +818,10 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       const bytes = new Uint8Array(await file.arrayBuffer());
       await createAuthorFromPdfBytes(file.name.replace(/\.pdf$/i, ''), bytes);
     } catch {
-      notify('Không thể đọc tệp PDF vừa chọn.', 'error');
+      notify(
+        'Không thể mở tệp vừa chọn. Thầy cô vui lòng kiểm tra lại đây có phải tệp PDF (*.pdf) hợp lệ không.',
+        'error'
+      );
     }
   };
 
@@ -725,16 +831,21 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
     return Number(raw) - selectedPdfPages[0];
   };
 
-  const handleExtractSelectedPages = async (specOverride?: string) => {
-    if (!rawUploadedPdfBytes || !authorWorksheet) return;
+  const handleExtractSelectedPages = async (specOverride?: string): Promise<boolean> => {
+    if (!rawUploadedPdfBytes || !authorWorksheet) return false;
     const total = rawPdfInfo?.totalPages || 1;
-    const spec = (specOverride ?? pageSpecInput).trim();
-    const chosen = parsePageSelectionSpec(spec, total);
-    if (chosen.length === 0) {
-      notify(`Phạm vi trang "${spec}" không hợp lệ (tài liệu có ${total} trang PDF).`, 'warning');
-      return;
+    const spec = (specOverride ?? effectivePageSpec).trim();
+    const validation = validatePageSelectionSpec(spec, total);
+    if (!validation.valid) {
+      notify(
+        validation.errorMessage ||
+          `Tài liệu có ${total} trang. Thầy cô vui lòng chọn trang từ 1 đến ${total}.`,
+        'warning'
+      );
+      return false;
     }
 
+    const chosen = validation.pages;
     setExtractingPages(true);
     try {
       const extractedBytes = await extractSelectedPagesPdf(rawUploadedPdfBytes, chosen);
@@ -758,21 +869,51 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       });
       setAuthorKeys({});
       setSelectedAuthorQId(null);
+      setEditingQuestionSnapshot(null);
       setDetectionNotes([]);
-      notify(
-        `Đã trích ${chosen.length} trang PDF (Trang PDF: ${chosen.join(', ')}). Nhấn "Nhận diện bài tập" để quét câu hỏi.`,
-        'success'
-      );
+      setAppliedPageSpec(spec || 'all');
+      setAuthorActionAlert(null);
+      notify(`Đã chọn ${validation.summaryText} (${chosen.length} trang).`, 'success');
+      return true;
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Không thể trích các trang đã chọn.', 'error');
+      notify(
+        err instanceof Error ? err.message : 'Không thể lấy các trang vừa chọn. Thầy cô hãy thử lại.',
+        'error'
+      );
+      return false;
     } finally {
       setExtractingPages(false);
     }
   };
 
+  const handleContinueFromStep1 = async () => {
+    if (!authorWorksheet || !authorPdfBytes) {
+      notify('Thầy cô hãy nhấn Tải PDF để chọn tài liệu từ máy tính trước.', 'warning');
+      return;
+    }
+    if (rawPdfInfo && rawPdfInfo.totalPages > 1) {
+      if (!pageValidation.valid) {
+        notify(
+          pageValidation.errorMessage ||
+            `Tài liệu có ${rawPdfInfo.totalPages} trang. Thầy cô vui lòng chọn trang từ 1 đến ${rawPdfInfo.totalPages}.`,
+          'warning'
+        );
+        return;
+      }
+      const normalizedCurrent = effectivePageSpec.trim() || 'all';
+      if (normalizedCurrent !== appliedPageSpec) {
+        const ok = await handleExtractSelectedPages(normalizedCurrent);
+        if (!ok) return;
+      }
+    }
+    setAuthorStep(2);
+    setAuthorActionAlert(null);
+  };
+
   const handleRunPdfQuestionDetection = async () => {
     if (!authorPdfBytes || !authorWorksheet) return;
     setDetectingQuestions(true);
+    setAuthorActionAlert(null);
     try {
       const sourcePdfPages = authorWorksheet.pageMapping?.sourcePdfPages;
       const offset = sourcePdfPages ? computePrintedOffset(sourcePdfPages) : null;
@@ -800,19 +941,27 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       });
       setAuthorKeys(result.emptyAnswerKeys);
       setDetectionNotes(result.notes);
-      setSelectedAuthorQId(result.questions[0]?.id || null);
-      setAuthorLeftTab('questions');
-      setAuthorScrollNonce((n) => n + 1);
+      setSelectedAuthorQId(null);
+      setEditingQuestionSnapshot(null);
 
-      notify(
-        result.questions.length > 0
-          ? `Đã đề xuất ${result.questions.length} vùng câu hỏi. Giáo viên vui lòng kiểm tra từng vùng và nhập đáp án chuẩn.`
-          : 'Không phát hiện mẫu câu hỏi rõ ràng từ lớp văn bản. Giáo viên có thể đặt vùng câu hỏi thủ công.',
-        result.questions.length > 0 ? 'success' : 'info'
-      );
+      if (result.questions.length > 0) {
+        setAuthorStep(3);
+        notify(
+          `Đã tìm thấy ${result.questions.length} câu hỏi. Thầy cô hãy kiểm tra trước khi giao bài.`,
+          'success'
+        );
+      } else {
+        setShowAddQuestionMenu(true);
+        notify(
+          'Ứng dụng chưa tìm được tất cả chỗ trả lời. Thầy cô có thể bổ sung bằng nút Thêm câu hỏi.',
+          'info'
+        );
+      }
     } catch (err) {
       notify(
-        err instanceof Error ? err.message : 'Không thể phân tích lớp văn bản của tệp PDF.',
+        err instanceof Error
+          ? err.message
+          : 'Không thể tự tìm câu hỏi trong tệp này. Thầy cô hãy nhấn nút Thêm câu hỏi để tự đánh dấu.',
         'error'
       );
     } finally {
@@ -833,14 +982,24 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       sourcePdfNum,
       printedLabel
     );
-    setAuthorWorksheet({
+    const nextWs: InteractiveWorksheet = {
       ...authorWorksheet,
       updatedAt: Date.now(),
       questions: [...authorWorksheet.questions, question],
-    });
-    setAuthorKeys({ ...authorKeys, [question.id]: key });
-    setSelectedAuthorQId(question.id);
+    };
+    const nextKeys = { ...authorKeys, [question.id]: key };
+    setAuthorWorksheet(nextWs);
+    setAuthorKeys(nextKeys);
     setPlacingType(null);
+    setShowAddQuestionMenu(false);
+    setAuthorStep(3);
+    setSelectedAuthorQId(question.id);
+    setEditingQuestionSnapshot({
+      question: JSON.parse(JSON.stringify(question)) as InteractiveQuestion,
+      key: JSON.parse(JSON.stringify(key)) as TeacherQuestionKey,
+    });
+    setAuthorActionAlert(null);
+    notify(`Đã thêm ${question.code}. Thầy cô có thể nhập đáp án và điểm rồi nhấn Lưu.`, 'success');
   };
 
   const updateAuthorQuestion = (qId: string, patch: Partial<InteractiveQuestion>) => {
@@ -866,7 +1025,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       ...prev,
       [qId]: freshKey,
     }));
-    notify(`Đã chuyển ${existing.code} sang dạng "${QUESTION_TYPE_META[nextType].shortLabel}".`, 'info');
+    notify(`Đã đổi ${existing.code} sang dạng "${QUESTION_TYPE_META[nextType].shortLabel}".`, 'info');
   };
 
   const deleteAuthorQuestion = (qId: string) => {
@@ -879,7 +1038,11 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
     const nextKeys = { ...authorKeys };
     delete nextKeys[qId];
     setAuthorKeys(nextKeys);
-    if (selectedAuthorQId === qId) setSelectedAuthorQId(null);
+    if (selectedAuthorQId === qId) {
+      setSelectedAuthorQId(null);
+      setEditingQuestionSnapshot(null);
+    }
+    notify('Đã xóa câu hỏi.', 'info');
   };
 
   const approveAllAuthorQuestions = () => {
@@ -893,62 +1056,104 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
         needsReview: false,
       })),
     });
-    notify('Đã xác nhận duyệt tất cả vùng câu hỏi.', 'success');
+    setAuthorActionAlert(null);
+    notify('Đã đánh dấu kiểm tra xong tất cả câu hỏi.', 'success');
   };
 
-  const saveTeacherMasterLocally = async (): Promise<boolean> => {
-    if (!authorWorksheet || !authorPdfBytes) return false;
-    const res = await interactiveStorage.saveTeacherWorksheet({
-      worksheetId: authorWorksheet.worksheetId,
-      worksheet: authorWorksheet,
-      answerKeys: authorKeys,
-      pdfBytes: authorPdfBytes,
-      createdAt: authorWorksheet.createdAt,
-      updatedAt: Date.now(),
-    });
-    if (!res.ok) {
-      if (res.quotaExceeded) setQuotaBanner(res.errorMessage || 'Bộ nhớ cục bộ đã đầy.');
-      notify(res.errorMessage || 'Không thể lưu bản gốc giáo viên.', 'error');
-      return false;
-    }
-    setQuotaBanner(null);
-    setGradeWorksheetId(authorWorksheet.worksheetId);
-    await refreshLocalLists();
-    notify('Đã lưu bản gốc đề + đáp án giáo viên vào bộ nhớ cục bộ.', 'success');
-    return true;
-  };
+  const saveTeacherMasterLocally = useCallback(
+    async (silent = false): Promise<boolean> => {
+      if (!authorWorksheet || !authorPdfBytes) return false;
+      const now = Date.now();
+      const res = await interactiveStorage.saveTeacherWorksheet({
+        worksheetId: authorWorksheet.worksheetId,
+        worksheet: authorWorksheet,
+        answerKeys: authorKeys,
+        pdfBytes: authorPdfBytes,
+        createdAt: authorWorksheet.createdAt,
+        updatedAt: now,
+      });
+      if (!res.ok) {
+        if (res.quotaExceeded) setQuotaBanner(res.errorMessage || 'Bộ nhớ cục bộ đã đầy.');
+        if (!silent) notify(res.errorMessage || 'Không thể lưu bài tập vào máy.', 'error');
+        return false;
+      }
+      setQuotaBanner(null);
+      setAuthorAutoSavedAt(now);
+      setGradeWorksheetId(authorWorksheet.worksheetId);
+      await refreshLocalLists();
+      if (!silent) notify('Đã lưu bài tập và đáp án giáo viên trên máy.', 'success');
+      return true;
+    },
+    [authorWorksheet, authorPdfBytes, authorKeys, notify, refreshLocalLists]
+  );
+
+  // Automatic work-in-progress save for teachers (prevents accidental loss of edits)
+  useEffect(() => {
+    if (!authorWorksheet || !authorPdfBytes) return;
+    if (authorWorksheet.questions.length === 0) return;
+    const timer = setTimeout(() => {
+      saveTeacherMasterLocally(true);
+    }, 2200);
+    return () => clearTimeout(timer);
+  }, [authorWorksheet, authorKeys, authorPdfBytes, saveTeacherMasterLocally]);
 
   const handleProceedToAssign = async () => {
     if (!authorWorksheet || !authorPdfBytes) return;
     if (authorWorksheet.questions.length === 0) {
-      notify('Vui lòng nhận diện hoặc đặt ít nhất 1 vùng câu hỏi trước khi giao bài.', 'warning');
+      setAuthorActionAlert({
+        title: 'Chưa có câu hỏi để giao',
+        detail: 'Bài tập hiện chưa có câu hỏi nào nên chưa thể giao cho học sinh. Thầy cô hãy tạo bài tập trước.',
+        actionLabel: 'Tạo bài tập tự động ngay',
+        onAction: () => {
+          setAuthorStep(2);
+          setAuthorActionAlert(null);
+        },
+      });
+      notify('Chưa có câu hỏi để giao. Thầy cô hãy tạo bài tập trước.', 'warning');
       return;
     }
-    const ok = await saveTeacherMasterLocally();
+    const ok = await saveTeacherMasterLocally(true);
     if (ok) {
+      setAuthorActionAlert(null);
       setInteractiveTab('assign');
+      notify('Bài tập đã sẵn sàng trong mục Giao bài.', 'success');
     }
   };
 
   const handleExportStudentPackage = async () => {
     if (!authorWorksheet || !authorPdfBytes) return;
     if (authorWorksheet.questions.length === 0) {
-      notify('Vui lòng đặt ít nhất 1 vùng câu hỏi tương tác trước khi xuất bài tập.', 'warning');
+      setAuthorActionAlert({
+        title: 'Chưa có câu hỏi để lưu bài tập',
+        detail: 'Thầy cô cần tạo ít nhất 1 câu hỏi trước khi lưu tệp PDF gửi cho học sinh.',
+        actionLabel: 'Tạo bài tập tự động ngay',
+        onAction: () => {
+          setAuthorStep(2);
+          setAuthorActionAlert(null);
+        },
+      });
+      notify('Chưa có câu hỏi để giao. Thầy cô hãy tạo bài tập trước.', 'warning');
       return;
     }
     try {
-      await saveTeacherMasterLocally();
+      await saveTeacherMasterLocally(true);
       const bytes = await exportStudentWorksheetPackage(authorWorksheet, authorPdfBytes);
       const safeName = authorWorksheet.title
         .replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF_-]+/g, '_')
         .slice(0, 60);
-      triggerInteractiveDownload(bytes, `${safeName}_BaiTap.pdf`, 'application/pdf');
+      const fileName = `${safeName}_BaiTap.pdf`;
+      triggerInteractiveDownload(bytes, fileName, 'application/pdf');
+      setJustSavedStudentPdfName(fileName);
+      setAuthorActionAlert(null);
       notify(
-        'Đã xuất tệp bài tập PDF (.pdf) gửi học sinh qua Zalo/Email (không chứa đáp án giáo viên).',
+        `Đã lưu tệp "${fileName}" về máy (đã tách sạch đáp án giáo viên). Thầy cô có thể gửi tệp này qua Zalo cho học sinh.`,
         'success'
       );
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Không thể xuất tệp bài tập PDF.', 'error');
+      notify(
+        err instanceof Error ? err.message : 'Không thể lưu tệp PDF bài tập. Thầy cô vui lòng thử lại.',
+        'error'
+      );
     }
   };
 
@@ -960,9 +1165,9 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
         .replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF_-]+/g, '_')
         .slice(0, 60);
       triggerInteractiveDownload(bytes, `${safeName}_BanGocGV.pdf`, 'application/pdf');
-      notify('Đã xuất tệp PDF bản gốc giáo viên (kèm đáp án nhúng riêng cho GV).', 'success');
+      notify('Đã lưu tệp bản gốc giáo viên (có kèm đáp án riêng cho thầy cô).', 'success');
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Không thể xuất bản gốc giáo viên.', 'error');
+      notify(err instanceof Error ? err.message : 'Không thể lưu bản gốc giáo viên.', 'error');
     }
   };
 
@@ -1557,21 +1762,42 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       icon: <GraduationCap className="w-4 h-4" />,
       badge: submissions.length,
     },
-    { id: 'guide', label: 'Hướng dẫn', icon: <BookOpen className="w-4 h-4" /> },
   ];
 
+  // Single contextual guidance banner tailored strictly to the teacher's current state
+  const contextualGuidance = useMemo(() => {
+    if (!authorWorksheet || !authorPdfBytes) {
+      return 'Thầy cô hãy nhấn Tải PDF để chọn tài liệu từ máy tính.';
+    }
+    if (authorStep === 1) {
+      return 'Tài liệu đã sẵn sàng. Thầy cô hãy chọn trang cần giao.';
+    }
+    if (authorWorksheet.questions.length === 0) {
+      return 'Nhấn Tạo bài tập tự động để ứng dụng tìm câu hỏi.';
+    }
+    if (authorReviewStats.approved < authorReviewStats.total) {
+      return 'Thầy cô hãy kiểm tra các câu hỏi được đánh dấu trên PDF.';
+    }
+    return 'Bài tập đã sẵn sàng. Thầy cô có thể xem thử hoặc lưu PDF.';
+  }, [authorWorksheet, authorPdfBytes, authorStep, authorReviewStats]);
+
+  const currentShownPagesLabel = useMemo(() => {
+    if (!authorWorksheet?.pageMapping?.sourcePdfPages?.length) return '';
+    return formatSelectedPagesVi(authorWorksheet.pageMapping.sourcePdfPages);
+  }, [authorWorksheet]);
+
   return (
-    <div className="flex-1 flex flex-col min-h-0 min-w-0 bg-[#F4F8F7] text-[#1F2937]">
-      {/* Top Integrated Workspace Navigation Bar (6 Clear Areas) */}
+    <div className="flex-1 flex flex-col min-h-0 min-w-0 bg-[#F4F8F7] text-[#0F172A]">
+      {/* Top Integrated Workspace Navigation Bar */}
       <div className="bg-white border-b border-slate-200 px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap shrink-0">
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2.5 flex-wrap">
           <button
             type="button"
             onClick={closeInteractive}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-[#164E63] font-semibold text-[15px] cursor-pointer"
+            className="inline-flex items-center gap-2 px-3.5 min-h-[44px] rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-[#164E63] font-bold text-[15.5px] cursor-pointer"
           >
             <ArrowLeft className="w-4 h-4" />
-            <span>Quay lại Studio</span>
+            <span>Quay lại</span>
           </button>
 
           <div className="h-6 w-px bg-slate-200 hidden sm:block" />
@@ -1584,17 +1810,17 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                   key={t.id}
                   type="button"
                   onClick={() => setInteractiveTab(t.id)}
-                  className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[14.5px] font-semibold transition-colors cursor-pointer ${
+                  className={`inline-flex items-center gap-2 px-3.5 min-h-[44px] rounded-xl text-[15.5px] font-bold transition-colors cursor-pointer ${
                     active
                       ? 'bg-[#087F70] text-white shadow-2xs'
-                      : 'bg-slate-100/80 text-slate-700 hover:bg-[#E6F1EF] hover:text-[#164E63]'
+                      : 'bg-slate-100 text-slate-800 hover:bg-[#E6F1EF] hover:text-[#164E63]'
                   }`}
                 >
                   {t.icon}
                   <span>{t.label}</span>
                   {typeof t.badge === 'number' && t.badge > 0 && (
                     <span
-                      className={`px-1.5 py-0.2 rounded-full text-[12px] font-bold ${
+                      className={`px-2 py-0.5 rounded-full text-[13px] font-bold ${
                         active ? 'bg-white/25 text-white' : 'bg-[#164E63]/10 text-[#164E63]'
                       }`}
                     >
@@ -1607,16 +1833,26 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
           </div>
         </div>
 
-        <div className="text-[13.5px] text-slate-600 hidden 2xl:block">
-          Bài tập PDF tương tác · 14 dạng câu hỏi · Online & Offline
-        </div>
+        {/* Prominent Dedicated User Guide Button */}
+        <button
+          type="button"
+          onClick={() => setInteractiveTab('guide')}
+          className={`inline-flex items-center gap-2 px-4 min-h-[44px] rounded-xl text-[16px] font-bold transition-colors cursor-pointer shrink-0 ${
+            tab === 'guide'
+              ? 'bg-[#164E63] text-white shadow-2xs'
+              : 'bg-[#E6F1EF] hover:bg-teal-100 text-[#164E63] border border-[#087F70]/40'
+          }`}
+        >
+          <BookOpen className="w-5 h-5" />
+          <span>HƯỚNG DẪN SỬ DỤNG</span>
+        </button>
       </div>
 
       {/* Quota Warning Banner (if IndexedDB quota is exceeded) */}
       {quotaBanner && (
-        <div className="bg-amber-50 border-b border-amber-300 px-4 py-2.5 flex items-center justify-between gap-3 text-[15px] text-amber-950 shrink-0">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+        <div className="bg-amber-50 border-b border-amber-300 px-4 py-3 flex items-center justify-between gap-3 text-[16px] text-amber-950 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0" />
             <span>{quotaBanner}</span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -1624,7 +1860,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
               <button
                 type="button"
                 onClick={handleExportSubmissionPackage}
-                className="px-3 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold text-[14px] cursor-pointer"
+                className="px-3.5 min-h-[44px] rounded-xl bg-amber-700 hover:bg-amber-800 text-white font-bold text-[15px] cursor-pointer"
               >
                 Tải sao lưu PDF ngay
               </button>
@@ -1632,7 +1868,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
             <button
               type="button"
               onClick={() => setQuotaBanner(null)}
-              className="px-2 py-1 rounded hover:bg-amber-200/60 text-[14px] font-semibold cursor-pointer"
+              className="px-3 min-h-[44px] rounded-xl hover:bg-amber-200/60 text-[15px] font-bold cursor-pointer"
             >
               Đóng
             </button>
@@ -1641,577 +1877,14 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       )}
 
       {/* ===================================================================
-          AREA 1: TẠO BÀI TẬP (3-COLUMN TEACHER AUTHORING & REVIEW WORKSPACE)
+          AREA 1: TẠO BÀI TẬP — 3-STEP SENIOR-FRIENDLY GUIDED WORKSPACE
+          Prioritizes a WIDE PDF viewport + AT MOST 1 clean left panel!
       =================================================================== */}
       {tab === 'author' && (
         <div className="flex-1 flex min-h-0 min-w-0">
-          {/* Left Column: 3 Sub-views — Questions Review List / Add 14 Types / Source PDF & Metadata */}
-          <aside className="w-80 bg-white border-r border-slate-200 flex flex-col min-h-0 shrink-0">
-            <div className="p-2 border-b border-slate-200 grid grid-cols-3 gap-1 bg-slate-50/70 shrink-0">
-              <button
-                type="button"
-                onClick={() => setAuthorLeftTab('source')}
-                className={`py-1.5 px-1.5 rounded-lg text-[13px] font-bold cursor-pointer transition-colors ${
-                  authorLeftTab === 'source'
-                    ? 'bg-[#164E63] text-white'
-                    : 'text-slate-700 hover:bg-white'
-                }`}
-              >
-                Nguồn PDF
-              </button>
-              <button
-                type="button"
-                onClick={() => setAuthorLeftTab('questions')}
-                className={`py-1.5 px-1.5 rounded-lg text-[13px] font-bold cursor-pointer transition-colors ${
-                  authorLeftTab === 'questions'
-                    ? 'bg-[#164E63] text-white'
-                    : 'text-slate-700 hover:bg-white'
-                }`}
-              >
-                Câu hỏi ({authorReviewStats.total})
-              </button>
-              <button
-                type="button"
-                onClick={() => setAuthorLeftTab('add')}
-                className={`py-1.5 px-1.5 rounded-lg text-[13px] font-bold cursor-pointer transition-colors ${
-                  authorLeftTab === 'add'
-                    ? 'bg-[#164E63] text-white'
-                    : 'text-slate-700 hover:bg-white'
-                }`}
-              >
-                + 14 dạng
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-3.5 space-y-4">
-              {authorLeftTab === 'source' && (
-                <>
-                  <div className="space-y-2">
-                    <div className="text-[15px] font-bold text-[#164E63]">1. Nạp tài liệu PDF gốc</div>
-                    <div className="grid grid-cols-1 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => authorPdfInputRef.current?.click()}
-                        className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-[#087F70] hover:bg-[#06695d] text-white font-semibold text-[14.5px] cursor-pointer"
-                      >
-                        <Upload className="w-4 h-4" />
-                        <span>Tải PDF từ máy tính</span>
-                      </button>
-                      {activeStudioDoc && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            createAuthorFromPdfBytes(
-                              activeStudioDoc.title,
-                              activeStudioDoc.currentPdfBytes,
-                              activeStudioDoc.subjectHint
-                            )
-                          }
-                          className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-[#087F70] bg-[#E6F1EF] hover:bg-teal-100 text-[#164E63] font-semibold text-[14px] cursor-pointer"
-                        >
-                          <FileText className="w-4 h-4 shrink-0" />
-                          <span className="truncate">Dùng PDF đang mở trong Studio</span>
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => authorMasterInputRef.current?.click()}
-                        className="inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-[14px] cursor-pointer"
-                      >
-                        <FolderOpen className="w-4 h-4" />
-                        <span>Mở bản gốc GV (.pdf)</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Metadata Panel when worksheet active */}
-                  {authorWorksheet && (
-                    <div className="space-y-2.5 pt-3 border-t border-slate-200">
-                      <div className="text-[14.5px] font-bold text-[#164E63]">Thông tin bài tập</div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <label className="space-y-0.5">
-                          <span className="block text-[12.5px] font-semibold text-slate-600">Môn học</span>
-                          <select
-                            value={authorWorksheet.subject}
-                            onChange={(e) => {
-                              const val = e.target.value as SubjectCategory;
-                              const label =
-                                SUBJECT_OPTIONS.find((s) => s.value === val)?.label || 'Tổng hợp';
-                              setAuthorWorksheet({
-                                ...authorWorksheet,
-                                subject: val,
-                                subjectLabel: label,
-                              });
-                            }}
-                            className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-[13.5px]"
-                          >
-                            {SUBJECT_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="space-y-0.5">
-                          <span className="block text-[12.5px] font-semibold text-slate-600">Khối lớp</span>
-                          <select
-                            value={authorWorksheet.grade}
-                            onChange={(e) =>
-                              setAuthorWorksheet({
-                                ...authorWorksheet,
-                                grade: Number(e.target.value) as GradeLevel,
-                              })
-                            }
-                            className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-[13.5px]"
-                          >
-                            <option value={10}>Lớp 10</option>
-                            <option value={11}>Lớp 11</option>
-                            <option value={12}>Lớp 12</option>
-                          </select>
-                        </label>
-                      </div>
-                      <label className="block space-y-0.5">
-                        <span className="block text-[12.5px] font-semibold text-slate-600">
-                          Thời gian làm bài (phút)
-                        </span>
-                        <input
-                          type="number"
-                          min={5}
-                          max={180}
-                          value={authorWorksheet.durationMinutes}
-                          onChange={(e) =>
-                            setAuthorWorksheet({
-                              ...authorWorksheet,
-                              durationMinutes: Math.max(5, Number(e.target.value) || 30),
-                            })
-                          }
-                          className="w-full rounded-md border border-slate-300 px-2.5 py-1 text-[13.5px]"
-                        />
-                      </label>
-                      <label className="block space-y-0.5">
-                        <span className="block text-[12.5px] font-semibold text-slate-600">
-                          Hướng dẫn làm bài cho học sinh
-                        </span>
-                        <textarea
-                          rows={2}
-                          value={authorWorksheet.instructions || ''}
-                          onChange={(e) =>
-                            setAuthorWorksheet({
-                              ...authorWorksheet,
-                              instructions: e.target.value,
-                            })
-                          }
-                          placeholder="Ghi chú ngắn gọn cho học sinh..."
-                          className="w-full rounded-md border border-slate-300 px-2.5 py-1 text-[13.5px]"
-                        />
-                      </label>
-                    </div>
-                  )}
-
-                  {/* 8 THPT Subject Templates */}
-                  <div className="space-y-2 pt-3 border-t border-slate-200">
-                    <div className="text-[14.5px] font-bold text-[#164E63]">
-                      Hoặc dùng mẫu 8 môn THPT
-                    </div>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {INTERACTIVE_SUBJECT_TEMPLATES.map((tpl) => (
-                        <button
-                          key={tpl.id}
-                          type="button"
-                          onClick={() => loadTemplateIntoAuthor(tpl.id)}
-                          className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-[#F4F8F7] hover:border-[#087F70] hover:bg-teal-50 text-left transition-colors cursor-pointer"
-                          title={tpl.subtitle}
-                        >
-                          <div className="text-[14px] font-bold text-[#164E63]">{tpl.subjectLabel}</div>
-                          <div className="text-[12px] text-slate-600">Lớp {tpl.grade}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {authorLeftTab === 'questions' && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-[14.5px] font-bold text-[#164E63] flex items-center gap-1.5">
-                      <ListChecks className="w-4 h-4 text-[#087F70]" />
-                      <span>Danh sách vùng câu hỏi</span>
-                    </div>
-                    {authorReviewStats.total > 0 && authorReviewStats.approved < authorReviewStats.total && (
-                      <button
-                        type="button"
-                        onClick={approveAllAuthorQuestions}
-                        className="px-2 py-1 rounded-md bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 text-[12px] font-bold cursor-pointer"
-                      >
-                        Duyệt tất cả
-                      </button>
-                    )}
-                  </div>
-
-                  {authorReviewStats.total > 0 && (
-                    <div className="rounded-lg bg-[#F4F8F7] border border-slate-200 px-3 py-2 text-[13px] flex items-center justify-between">
-                      <span>
-                        Đã duyệt: <strong className="text-emerald-700">{authorReviewStats.approved}</strong> /{' '}
-                        {authorReviewStats.total}
-                      </span>
-                      {authorReviewStats.needsReview > 0 && (
-                        <span className="text-amber-800 font-semibold">
-                          {authorReviewStats.needsReview} cần kiểm tra
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  {!authorWorksheet || authorWorksheet.questions.length === 0 ? (
-                    <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 text-[14px] text-slate-600 space-y-2.5">
-                      <p>Chưa có vùng câu hỏi nào trên trang PDF.</p>
-                      <button
-                        type="button"
-                        onClick={() => setAuthorLeftTab('add')}
-                        className="w-full py-1.5 rounded-lg bg-[#087F70] text-white font-semibold text-[13.5px] cursor-pointer"
-                      >
-                        + Đặt vùng câu hỏi thủ công
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {authorWorksheet.questions.map((q) => {
-                        const selected = selectedAuthorQId === q.id;
-                        const needsReview = Boolean(q.needsReview && !q.teacherApproved);
-                        return (
-                          <button
-                            key={q.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedAuthorQId(q.id);
-                              setAuthorScrollNonce((n) => n + 1);
-                            }}
-                            className={`w-full text-left rounded-xl border p-2.5 transition-colors cursor-pointer space-y-1 ${
-                              selected
-                                ? 'border-[#087F70] bg-[#E6F1EF] shadow-2xs'
-                                : needsReview
-                                  ? 'border-amber-300 bg-amber-50/40 hover:border-amber-500'
-                                  : 'border-slate-200 bg-white hover:border-[#087F70]/60'
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-1.5">
-                              <span className="font-bold text-[14px] text-[#164E63] truncate">
-                                {q.code} · {QUESTION_TYPE_META[q.type].shortLabel}
-                              </span>
-                              <span className="text-[12.5px] font-bold text-slate-600 shrink-0">
-                                {q.maxPoints}đ
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between gap-1.5 text-[12px]">
-                              <span className="text-slate-600">
-                                Trang PDF {q.sourcePdfPageNumber ?? q.region.pageIndex + 1}
-                                {q.printedPageLabel ? ` (in ${q.printedPageLabel})` : ''}
-                              </span>
-                              {q.teacherApproved ? (
-                                <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold">
-                                  Đã duyệt
-                                </span>
-                              ) : needsReview ? (
-                                <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 font-bold">
-                                  Cần GV kiểm tra
-                                </span>
-                              ) : (
-                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold">
-                                  Chờ duyệt
-                                </span>
-                              )}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {authorLeftTab === 'add' && (
-                <div className="space-y-2.5">
-                  <div className="text-[14.5px] font-bold text-[#164E63]">
-                    Đặt vùng câu hỏi (14 dạng tương tác)
-                  </div>
-                  {!authorWorksheet ? (
-                    <p className="text-[13.5px] text-slate-600">
-                      Hãy nạp tệp PDF hoặc chọn 1 mẫu môn học ở mục <strong>Nguồn PDF</strong> trước.
-                    </p>
-                  ) : (
-                    <>
-                      <p className="text-[13px] text-slate-600">
-                        Chọn 1 dạng câu hỏi dưới đây rồi nhấp trực tiếp vào vị trí trên trang PDF để tạo khung.
-                      </p>
-                      <div className="grid grid-cols-1 gap-1.5">
-                        {ALL_QUESTION_TYPES.map((qType) => {
-                          const meta = QUESTION_TYPE_META[qType];
-                          const active = placingType === qType;
-                          return (
-                            <button
-                              key={qType}
-                              type="button"
-                              onClick={() => setPlacingType(active ? null : qType)}
-                              className={`flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg border text-left text-[13.5px] font-semibold transition-colors cursor-pointer ${
-                                active
-                                  ? 'bg-[#087F70] border-[#087F70] text-white'
-                                  : 'bg-white border-slate-200 text-slate-800 hover:border-[#087F70] hover:bg-teal-50/40'
-                              }`}
-                            >
-                              <span className="flex items-center gap-1.5 truncate">
-                                <Plus className="w-3.5 h-3.5 shrink-0" />
-                                <span className="truncate">{meta.shortLabel}</span>
-                              </span>
-                              <span
-                                className={`text-[11.5px] px-1.5 py-0.5 rounded shrink-0 ${
-                                  active
-                                    ? 'bg-white/20 text-white'
-                                    : meta.autoGradable === 'manual'
-                                      ? 'bg-amber-50 text-amber-800'
-                                      : 'bg-teal-50 text-[#087F70]'
-                                }`}
-                              >
-                                {meta.autoGradable === 'manual' ? 'Chấm tay' : 'Tự chấm'}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          </aside>
-
-          {/* Center Column: Top Action Bar + Page Selection & Auto-Detection Bar + PDF Canvas */}
-          <div className="flex-1 flex flex-col min-w-0 min-h-0">
-            {authorWorksheet && (
-              <>
-                <div className="bg-white border-b border-slate-200 px-4 py-2 flex items-center justify-between gap-2.5 flex-wrap shrink-0">
-                  <div className="flex items-center gap-2 flex-1 min-w-[220px]">
-                    <input
-                      type="text"
-                      value={authorWorksheet.title}
-                      onChange={(e) =>
-                        setAuthorWorksheet({ ...authorWorksheet, title: e.target.value })
-                      }
-                      className="flex-1 min-w-[180px] rounded-lg border border-slate-300 px-3 py-1.5 text-[15px] font-bold text-[#164E63] focus:border-[#087F70] outline-none"
-                      placeholder="Tên bài tập PDF tương tác..."
-                    />
-                    <select
-                      value={authorWorksheet.examMode}
-                      onChange={(e) =>
-                        setAuthorWorksheet({
-                          ...authorWorksheet,
-                          examMode: e.target.value as 'exam' | 'practice',
-                        })
-                      }
-                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[14px] font-semibold text-slate-700"
-                    >
-                      <option value="exam">Chế độ Kiểm tra</option>
-                      <option value="practice">Chế độ Luyện tập</option>
-                    </select>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAuthorPreviewStudent((v) => !v);
-                        setPlacingType(null);
-                      }}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[14px] font-semibold cursor-pointer ${
-                        authorPreviewStudent
-                          ? 'bg-[#164E63] border-[#164E63] text-white'
-                          : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'
-                      }`}
-                    >
-                      <Eye className="w-4 h-4" />
-                      <span>{authorPreviewStudent ? 'Thoát xem thử' : 'Xem thử HS'}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={saveTeacherMasterLocally}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-[#164E63] font-semibold text-[14px] cursor-pointer"
-                    >
-                      <Save className="w-4 h-4 text-[#087F70]" />
-                      <span>Lưu bản gốc GV</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleExportTeacherBackup}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-[14px] cursor-pointer"
-                      title="Xuất sao lưu đề + đáp án riêng của giáo viên"
-                    >
-                      <Download className="w-4 h-4" />
-                      <span>Sao lưu GV</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleExportStudentPackage}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#087F70] bg-teal-50 hover:bg-teal-100 text-[#164E63] font-semibold text-[14px] cursor-pointer"
-                    >
-                      <FileDown className="w-4 h-4 text-[#087F70]" />
-                      <span>Xuất PDF bài tập</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleProceedToAssign}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#087F70] hover:bg-[#06695d] text-white font-semibold text-[14px] cursor-pointer shadow-2xs"
-                    >
-                      <Send className="w-4 h-4" />
-                      <span>Giao bài →</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Page Selection (Số trang tệp PDF vs Số trang in) + Auto-Detect Bar */}
-                <div className="bg-[#F8FBFA] border-b border-slate-200 px-4 py-2 flex items-center justify-between gap-3 flex-wrap shrink-0 text-[13.5px]">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {rawPdfInfo && rawPdfInfo.totalPages > 1 && (
-                      <>
-                        <span className="font-bold text-[#164E63]">
-                          Chọn trang PDF (1–{rawPdfInfo.totalPages}):
-                        </span>
-                        <input
-                          type="text"
-                          value={pageSpecInput}
-                          onChange={(e) => setPageSpecInput(e.target.value)}
-                          placeholder="VD: 2-3 hoặc 2, 3, 7-9 hoặc all"
-                          className="w-44 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[13.5px]"
-                          title="Hỗ trợ 1 trang (2), khoảng trang (2-3), rời rạc (2, 5, 7-9) hoặc all"
-                        />
-                        <input
-                          type="text"
-                          value={firstPrintedPageInput}
-                          onChange={(e) => setFirstPrintedPageInput(e.target.value)}
-                          placeholder="Trang in đầu (tùy chọn)"
-                          className="w-36 rounded-md border border-slate-300 bg-white px-2 py-1 text-[13px]"
-                          title="Số trang in trên giấy tương ứng với trang PDF đầu tiên được chọn"
-                        />
-                        <button
-                          type="button"
-                          disabled={extractingPages}
-                          onClick={() => handleExtractSelectedPages()}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-[#164E63] bg-white hover:bg-[#E6F1EF] text-[#164E63] font-semibold cursor-pointer disabled:opacity-50"
-                        >
-                          {extractingPages ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Scissors className="w-3.5 h-3.5" />
-                          )}
-                          <span>Trích trang PDF</span>
-                        </button>
-                      </>
-                    )}
-
-                    {detectedLessonShortcuts.length > 0 && (
-                      <select
-                        defaultValue=""
-                        onChange={(e) => {
-                          if (!e.target.value) return;
-                          setPageSpecInput(e.target.value);
-                          handleExtractSelectedPages(e.target.value);
-                          e.target.value = '';
-                        }}
-                        className="max-w-[200px] rounded-md border border-slate-300 bg-white px-2 py-1 text-[13px] text-slate-700"
-                        title="Chọn nhanh theo bài học phát hiện được"
-                      >
-                        <option value="">Chọn nhanh theo Bài...</option>
-                        {detectedLessonShortcuts.map((ls, idx) => {
-                          const spec =
-                            ls.startPage === ls.endPage
-                              ? `${ls.startPage}`
-                              : `${ls.startPage}-${ls.endPage}`;
-                          return (
-                            <option key={idx} value={spec}>
-                              Tr.PDF {spec}: {ls.title.slice(0, 36)}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    )}
-                  </div>
-
-                  <button
-                    type="button"
-                    disabled={detectingQuestions || !authorPdfBytes}
-                    onClick={handleRunPdfQuestionDetection}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#164E63] hover:bg-[#0f3b4c] text-white font-semibold text-[13.5px] cursor-pointer disabled:opacity-50 shrink-0"
-                    title="Đọc lớp văn bản PDF.js để đề xuất vùng câu hỏi — không sửa PDF gốc và không tự đoán đáp án"
-                  >
-                    {detectingQuestions ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="w-4 h-4" />
-                    )}
-                    <span>
-                      {detectingQuestions ? 'Đang nhận diện...' : 'Nhận diện bài tập (PDF.js)'}
-                    </span>
-                  </button>
-                </div>
-
-                {/* Detection Feedback Banner (honest scan & review alerts) */}
-                {detectionNotes.length > 0 && (
-                  <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-start justify-between gap-3 text-[13.5px] text-amber-950 shrink-0">
-                    <div className="space-y-0.5">
-                      {detectionNotes.map((n, i) => (
-                        <div key={i} className="flex items-start gap-1.5">
-                          <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-                          <span>{n}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setDetectionNotes([])}
-                      className="text-[12.5px] font-bold text-amber-900 hover:underline shrink-0 cursor-pointer"
-                    >
-                      Ẩn
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-
-            <InteractivePdfCanvas
-              pdfBytes={authorPdfBytes}
-              questions={authorWorksheet?.questions || []}
-              mode={authorPreviewStudent ? 'solve' : 'author'}
-              examMode={authorWorksheet?.examMode || 'exam'}
-              selectedQuestionId={authorPreviewStudent ? null : selectedAuthorQId}
-              answers={authorPreviewStudent ? authorPreviewAnswers : undefined}
-              teacherKeys={
-                authorPreviewStudent && authorWorksheet?.examMode === 'practice'
-                  ? authorKeys
-                  : undefined
-              }
-              placingTypeLabel={
-                !authorPreviewStudent && placingType
-                  ? QUESTION_TYPE_META[placingType].label
-                  : null
-              }
-              sourcePdfPages={authorSourcePages}
-              printedPageLabels={authorPrintedLabels}
-              scrollToQuestionNonce={authorScrollNonce}
-              onSelectQuestion={(id) => setSelectedAuthorQId(id)}
-              onPlaceAtPoint={handlePlaceQuestionAtPoint}
-              onUpdateRegion={(qId, patch) => {
-                const q = authorWorksheet?.questions.find((item) => item.id === qId);
-                if (q) updateAuthorQuestion(qId, { region: { ...q.region, ...patch } });
-              }}
-              onDeleteQuestion={deleteAuthorQuestion}
-              onChangeAnswer={(qId, next) =>
-                setAuthorPreviewAnswers((prev) => ({ ...prev, [qId]: next }))
-              }
-            />
-          </div>
-
-          {/* Right Column: Selected Question Inspector (Type Switcher + Answer Key + Rubric + Approve) */}
+          {/* Single Left Panel: Either Question Editor (when editing a question) OR 3-Step Guide */}
           {!authorPreviewStudent && (
-            <aside className="w-88 bg-white border-l border-slate-200 overflow-y-auto shrink-0">
+            <aside className="w-[385px] xl:w-[415px] bg-white border-r border-slate-200 flex flex-col min-h-0 shrink-0">
               {selectedAuthorQuestion && authorWorksheet ? (
                 <TeacherQuestionInspector
                   question={selectedAuthorQuestion}
@@ -2230,30 +1903,1024 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                     }))
                   }
                   onDeleteQuestion={() => deleteAuthorQuestion(selectedAuthorQuestion.id)}
+                  onSaveAndClose={() => {
+                    setSelectedAuthorQId(null);
+                    setEditingQuestionSnapshot(null);
+                    notify(`Đã lưu ${selectedAuthorQuestion.code}.`, 'success');
+                  }}
+                  onCancel={cancelQuestionEdit}
                 />
               ) : (
-                <div className="p-5 space-y-4 text-[14.5px] text-slate-600">
-                  <div className="font-bold text-[#164E63] text-[16px]">
-                    Rà soát & Đáp án giáo viên
-                  </div>
-                  <p className="leading-relaxed">
-                    Chọn một vùng câu hỏi trong danh sách bên trái hoặc trực tiếp trên trang PDF để đổi dạng câu hỏi (14 dạng), chỉnh chế độ <strong>Vẽ đường nối / Kéo thả</strong>, cài đáp án chuẩn và nhấn <strong>Xác nhận duyệt</strong>.
-                  </p>
-                  {authorWorksheet && authorWorksheet.questions.length > 0 && (
-                    <div className="rounded-xl bg-[#F4F8F7] border border-slate-200 p-3.5 space-y-1 text-[13.5px]">
-                      <div className="font-bold text-[#164E63]">
-                        Tổng quan bài tập: {authorReviewStats.total} câu
-                      </div>
-                      <div>
-                        Đã duyệt: <strong className="text-emerald-700">{authorReviewStats.approved}</strong> · Cần kiểm tra:{' '}
-                        <strong className="text-amber-700">{authorReviewStats.needsReview}</strong>
-                      </div>
+                <>
+                  {/* 3-Step Visual Progress Header */}
+                  <div className="p-3.5 border-b border-slate-200 bg-[#F8FBFA] shrink-0 space-y-3">
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {(
+                        [
+                          { step: 1 as const, label: '1. Chọn bài' },
+                          { step: 2 as const, label: '2. Tạo bài' },
+                          { step: 3 as const, label: '3. Kiểm tra' },
+                        ] as const
+                      ).map((item) => {
+                        const isActive = authorStep === item.step;
+                        const isDone =
+                          (item.step === 1 && Boolean(authorPdfBytes)) ||
+                          (item.step === 2 && (authorWorksheet?.questions.length || 0) > 0) ||
+                          (item.step === 3 &&
+                            authorReviewStats.total > 0 &&
+                            authorReviewStats.approved === authorReviewStats.total);
+                        const disabled = item.step > 1 && !authorPdfBytes;
+                        return (
+                          <button
+                            key={item.step}
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => {
+                              setAuthorStep(item.step);
+                              setAuthorActionAlert(null);
+                            }}
+                            className={`min-h-[44px] px-2 rounded-xl text-[15px] font-bold transition-colors flex items-center justify-center gap-1 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed ${
+                              isActive
+                                ? 'bg-[#164E63] text-white shadow-2xs'
+                                : isDone
+                                  ? 'bg-[#E6F1EF] text-[#164E63] hover:bg-teal-100'
+                                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            {isDone && !isActive && (
+                              <Check className="w-4 h-4 text-[#087F70] shrink-0" />
+                            )}
+                            <span className="truncate">{item.label}</span>
+                          </button>
+                        );
+                      })}
                     </div>
-                  )}
-                </div>
+
+                    {/* Single Contextual Guidance Banner */}
+                    <div className="rounded-xl bg-[#E6F1EF] border border-teal-200 px-3.5 py-2.5 flex items-start gap-2.5 text-[16px] text-[#164E63] font-medium leading-snug">
+                      <Info className="w-5 h-5 text-[#087F70] shrink-0 mt-0.5" />
+                      <span>{contextualGuidance}</span>
+                    </div>
+                  </div>
+
+                  {/* Scrollable Step Body */}
+                  <div className="flex-1 overflow-y-auto p-4 space-y-5 text-[16px]">
+                    {/* ===================== STEP 1: CHỌN BÀI TẬP CẦN GIAO ===================== */}
+                    {authorStep === 1 && (
+                      <div className="space-y-5">
+                        <div className="space-y-1.5">
+                          <h2 className="text-[21px] font-bold text-[#164E63]">
+                            1. Chọn bài tập cần giao
+                          </h2>
+                          <p className="text-[16px] text-slate-700 leading-relaxed">
+                            Thầy cô tải tệp PDF lên, sau đó chọn những trang muốn giao cho học sinh.
+                          </p>
+                        </div>
+
+                        {/* Primary Upload Action */}
+                        <div className="space-y-2.5">
+                          <button
+                            type="button"
+                            onClick={() => authorPdfInputRef.current?.click()}
+                            className="w-full inline-flex items-center justify-center gap-2.5 min-h-[52px] px-4 rounded-xl bg-[#087F70] hover:bg-[#06695d] text-white font-bold text-[17px] cursor-pointer shadow-2xs"
+                          >
+                            <Upload className="w-5 h-5" />
+                            <span>{authorPdfBytes ? 'Chọn tệp PDF khác' : 'Tải PDF'}</span>
+                          </button>
+
+                          {activeStudioDoc && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                createAuthorFromPdfBytes(
+                                  activeStudioDoc.title,
+                                  activeStudioDoc.currentPdfBytes,
+                                  activeStudioDoc.subjectHint
+                                )
+                              }
+                              className="w-full inline-flex items-center justify-center gap-2 min-h-[46px] px-4 rounded-xl border border-[#087F70] bg-[#F4F8F7] hover:bg-teal-50 text-[#164E63] font-bold text-[16px] cursor-pointer"
+                            >
+                              <FileText className="w-5 h-5 shrink-0 text-[#087F70]" />
+                              <span className="truncate">Dùng tài liệu PDF đang mở</span>
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Resume Auto-Saved Teacher Work-In-Progress */}
+                        {!authorPdfBytes && teacherWorksheets.length > 0 && (
+                          <div className="rounded-xl border border-teal-200 bg-[#F4F8F7] p-4 space-y-2.5">
+                            <div className="text-[16px] font-bold text-[#164E63]">
+                              Tiếp tục bài tập đang soạn
+                            </div>
+                            <div className="space-y-2">
+                              {teacherWorksheets.slice(0, 3).map((tw) => (
+                                <button
+                                  key={tw.worksheetId}
+                                  type="button"
+                                  onClick={() => {
+                                    setAuthorWorksheet(tw.worksheet);
+                                    setAuthorKeys(tw.answerKeys);
+                                    setAuthorPdfBytes(tw.pdfBytes);
+                                    setRawUploadedPdfBytes(tw.pdfBytes);
+                                    setRawPdfInfo(null);
+                                    setSelectedAuthorQId(null);
+                                    setEditingQuestionSnapshot(null);
+                                    setAuthorStep(tw.worksheet.questions.length > 0 ? 3 : 2);
+                                    notify(`Đã mở lại bài tập "${tw.worksheet.title}".`, 'success');
+                                  }}
+                                  className="w-full text-left rounded-xl bg-white border border-slate-200 hover:border-[#087F70] p-3 cursor-pointer space-y-0.5"
+                                >
+                                  <div className="text-[16px] font-bold text-[#164E63] truncate">
+                                    {tw.worksheet.title}
+                                  </div>
+                                  <div className="text-[14.5px] text-slate-600">
+                                    {tw.worksheet.questions.length} câu hỏi · Lưu lúc{' '}
+                                    {new Date(tw.updatedAt).toLocaleTimeString('vi-VN', {
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    })}
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Page Selection Card (when PDF loaded) */}
+                        {authorWorksheet && authorPdfBytes && (
+                          <div className="rounded-xl border border-slate-200 bg-[#F8FBFA] p-4 space-y-4">
+                            <div className="space-y-1">
+                              <div className="text-[17px] font-bold text-[#164E63]">
+                                Chọn trang cần giao
+                              </div>
+                              <div className="text-[15.5px] text-slate-700">
+                                Tài liệu: <strong>{authorWorksheet.title}</strong>
+                                {rawPdfInfo ? ` (${rawPdfInfo.totalPages} trang)` : ''}
+                              </div>
+                            </div>
+
+                            {rawPdfInfo && rawPdfInfo.totalPages > 1 ? (
+                              <>
+                                {/* Simple 3-Mode Selector */}
+                                <div className="grid grid-cols-3 gap-1.5">
+                                  {(
+                                    [
+                                      { id: 'all' as const, label: 'Tất cả' },
+                                      { id: 'range' as const, label: 'Từ ... đến ...' },
+                                      { id: 'custom' as const, label: 'Nhập tự do' },
+                                    ] as const
+                                  ).map((m) => (
+                                    <button
+                                      key={m.id}
+                                      type="button"
+                                      onClick={() => setPageSelectMode(m.id)}
+                                      className={`min-h-[44px] px-2 rounded-xl border text-[15px] font-bold cursor-pointer ${
+                                        pageSelectMode === m.id
+                                          ? 'bg-[#164E63] border-[#164E63] text-white'
+                                          : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'
+                                      }`}
+                                    >
+                                      {m.label}
+                                    </button>
+                                  ))}
+                                </div>
+
+                                {pageSelectMode === 'range' && (
+                                  <div className="grid grid-cols-2 gap-3">
+                                    <label className="space-y-1">
+                                      <span className="block text-[15.5px] font-semibold text-slate-800">
+                                        Từ trang
+                                      </span>
+                                      <input
+                                        ref={pageSpecInputRef}
+                                        type="number"
+                                        min={1}
+                                        max={rawPdfInfo.totalPages}
+                                        value={rangeStartPage}
+                                        onChange={(e) => setRangeStartPage(e.target.value)}
+                                        className="w-full min-h-[46px] rounded-xl border border-slate-300 bg-white px-3.5 text-[17px] font-bold text-[#164E63]"
+                                      />
+                                    </label>
+                                    <label className="space-y-1">
+                                      <span className="block text-[15.5px] font-semibold text-slate-800">
+                                        Đến trang
+                                      </span>
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        max={rawPdfInfo.totalPages}
+                                        value={rangeEndPage}
+                                        onChange={(e) => setRangeEndPage(e.target.value)}
+                                        className="w-full min-h-[46px] rounded-xl border border-slate-300 bg-white px-3.5 text-[17px] font-bold text-[#164E63]"
+                                      />
+                                    </label>
+                                  </div>
+                                )}
+
+                                {pageSelectMode === 'custom' && (
+                                  <label className="block space-y-1.5">
+                                    <span className="block text-[15.5px] font-semibold text-slate-800">
+                                      Nhập các trang muốn chọn (ví dụ: 2 hoặc 2-3 hoặc 2, 3, 7-9)
+                                    </span>
+                                    <input
+                                      ref={pageSpecInputRef}
+                                      type="text"
+                                      value={pageSpecInput}
+                                      onChange={(e) => setPageSpecInput(e.target.value)}
+                                      placeholder="Ví dụ: 2-3 hoặc 2, 3, 7-9"
+                                      className="w-full min-h-[46px] rounded-xl border border-slate-300 bg-white px-3.5 text-[16.5px] font-semibold text-[#164E63]"
+                                    />
+                                  </label>
+                                )}
+
+                                {/* Detected Lesson Shortcuts */}
+                                {detectedLessonShortcuts.length > 0 && (
+                                  <label className="block space-y-1.5">
+                                    <span className="block text-[15.5px] font-semibold text-slate-800">
+                                      Hoặc chọn nhanh theo bài học
+                                    </span>
+                                    <select
+                                      defaultValue=""
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        if (!val) return;
+                                        const parts = val.split('-');
+                                        setPageSelectMode('range');
+                                        setRangeStartPage(parts[0]);
+                                        setRangeEndPage(parts[1] || parts[0]);
+                                        setPageSpecInput(val);
+                                        handleExtractSelectedPages(val);
+                                        e.target.value = '';
+                                      }}
+                                      className="w-full min-h-[46px] rounded-xl border border-slate-300 bg-white px-3 text-[15.5px] text-slate-800"
+                                    >
+                                      <option value="">-- Chọn nhanh bài học trong tài liệu --</option>
+                                      {detectedLessonShortcuts.map((ls, idx) => {
+                                        const spec =
+                                          ls.startPage === ls.endPage
+                                            ? `${ls.startPage}`
+                                            : `${ls.startPage}-${ls.endPage}`;
+                                        return (
+                                          <option key={idx} value={spec}>
+                                            Trang {spec}: {ls.title.slice(0, 42)}
+                                          </option>
+                                        );
+                                      })}
+                                    </select>
+                                  </label>
+                                )}
+
+                                {/* Friendly Preview OR Actionable Error */}
+                                {pageValidation.valid ? (
+                                  <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-3.5 py-2.5 text-[15.5px] text-emerald-950 font-semibold flex items-center justify-between gap-2 flex-wrap">
+                                    <span>
+                                      Đang chọn: {pageValidation.summaryText} ({pageValidation.pages.length}{' '}
+                                      trang)
+                                    </span>
+                                    {effectivePageSpec.trim() !== appliedPageSpec && (
+                                      <button
+                                        type="button"
+                                        disabled={extractingPages}
+                                        onClick={() => handleExtractSelectedPages()}
+                                        className="px-3 min-h-[38px] rounded-lg bg-white border border-emerald-400 hover:bg-emerald-100 text-emerald-900 text-[14.5px] font-bold cursor-pointer"
+                                      >
+                                        Xem ngay các trang này
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <div className="rounded-xl bg-red-50 border border-red-300 p-3.5 space-y-2.5 text-[15.5px] text-red-900">
+                                    <div className="font-bold flex items-start gap-2">
+                                      <AlertTriangle className="w-5 h-5 text-red-700 shrink-0 mt-0.5" />
+                                      <span>{pageValidation.errorMessage}</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setPageSelectMode('range');
+                                        setRangeStartPage('1');
+                                        setRangeEndPage(String(Math.min(2, rawPdfInfo.totalPages)));
+                                        setPageSpecInput(`1-${Math.min(2, rawPdfInfo.totalPages)}`);
+                                      }}
+                                      className="px-3.5 min-h-[42px] rounded-lg bg-white border border-red-300 hover:bg-red-100 text-red-800 font-bold text-[15px] cursor-pointer"
+                                    >
+                                      Đặt lại trang hợp lệ (1–{Math.min(2, rawPdfInfo.totalPages)})
+                                    </button>
+                                  </div>
+                                )}
+                              </>
+                            ) : (
+                              <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-3.5 py-2.5 text-[15.5px] text-emerald-950 font-semibold">
+                                Tài liệu có 1 trang và đã sẵn sàng để tạo bài tập.
+                              </div>
+                            )}
+
+                            <button
+                              type="button"
+                              disabled={extractingPages || !pageValidation.valid}
+                              onClick={handleContinueFromStep1}
+                              className="w-full inline-flex items-center justify-center gap-2 min-h-[50px] px-4 rounded-xl bg-[#164E63] hover:bg-[#113d4d] disabled:opacity-45 text-white font-bold text-[16.5px] cursor-pointer shadow-2xs"
+                            >
+                              {extractingPages ? (
+                                <>
+                                  <Loader2 className="w-5 h-5 animate-spin" />
+                                  <span>Đang chuẩn bị các trang đã chọn...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span>Tiếp tục sang Bước 2</span>
+                                  <ArrowRight className="w-5 h-5" />
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Collapsible Templates & Teacher Master File */}
+                        <div className="pt-2 border-t border-slate-200">
+                          <button
+                            type="button"
+                            onClick={() => setShowSampleDrawer((v) => !v)}
+                            className="w-full flex items-center justify-between min-h-[44px] px-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-[15.5px] font-bold text-[#164E63] cursor-pointer"
+                          >
+                            <span>Mở bài mẫu có sẵn hoặc bản gốc GV</span>
+                            {showSampleDrawer ? (
+                              <ChevronUp className="w-5 h-5" />
+                            ) : (
+                              <ChevronDown className="w-5 h-5" />
+                            )}
+                          </button>
+
+                          {showSampleDrawer && (
+                            <div className="mt-3 space-y-3">
+                              <button
+                                type="button"
+                                onClick={() => authorMasterInputRef.current?.click()}
+                                className="w-full inline-flex items-center justify-center gap-2 min-h-[46px] px-3.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-[#164E63] font-bold text-[15.5px] cursor-pointer"
+                              >
+                                <FolderOpen className="w-5 h-5 text-[#087F70]" />
+                                <span>Mở tệp bản gốc giáo viên (.pdf)</span>
+                              </button>
+                              <div className="text-[15px] font-bold text-slate-700">
+                                Hoặc chọn nhanh 1 bài mẫu 8 môn THPT:
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                {INTERACTIVE_SUBJECT_TEMPLATES.map((tpl) => (
+                                  <button
+                                    key={tpl.id}
+                                    type="button"
+                                    onClick={() => loadTemplateIntoAuthor(tpl.id)}
+                                    className="p-3 min-h-[54px] rounded-xl border border-slate-200 bg-[#F4F8F7] hover:border-[#087F70] hover:bg-teal-50 text-left cursor-pointer"
+                                  >
+                                    <div className="text-[15.5px] font-bold text-[#164E63]">
+                                      {tpl.subjectLabel}
+                                    </div>
+                                    <div className="text-[14px] text-slate-600">Lớp {tpl.grade}</div>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ===================== STEP 2: TẠO BÀI TẬP ===================== */}
+                    {authorStep === 2 && authorWorksheet && (
+                      <div className="space-y-5">
+                        <div className="space-y-1.5">
+                          <h2 className="text-[21px] font-bold text-[#164E63]">2. Tạo bài tập</h2>
+                          <p className="text-[16px] text-slate-700 leading-relaxed">
+                            Nhấn nút bên dưới. Ứng dụng sẽ tìm câu hỏi và những vị trí học sinh cần trả lời.
+                          </p>
+                        </div>
+
+                        {currentShownPagesLabel && (
+                          <div className="rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2.5 text-[15.5px] text-slate-700">
+                            Phạm vi đang làm: <strong className="text-[#164E63]">{currentShownPagesLabel}</strong>
+                          </div>
+                        )}
+
+                        {/* Big Single Primary Action Button */}
+                        <button
+                          type="button"
+                          disabled={detectingQuestions || !authorPdfBytes}
+                          onClick={handleRunPdfQuestionDetection}
+                          className="w-full inline-flex items-center justify-center gap-2.5 min-h-[56px] px-4 rounded-xl bg-[#087F70] hover:bg-[#06695d] disabled:opacity-55 text-white font-bold text-[17px] cursor-pointer shadow-sm"
+                        >
+                          {detectingQuestions ? (
+                            <>
+                              <Loader2 className="w-6 h-6 animate-spin" />
+                              <span>Đang tìm câu hỏi...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="w-6 h-6" />
+                              <span>TẠO BÀI TẬP TỰ ĐỘNG</span>
+                            </>
+                          )}
+                        </button>
+
+                        {detectingQuestions && (
+                          <div className="rounded-xl bg-teal-50 border border-teal-200 p-4 text-[16px] text-[#164E63] font-medium">
+                            Đang tìm câu hỏi trong tài liệu. Thầy cô vui lòng chờ...
+                          </div>
+                        )}
+
+                        {/* Honest Detection Result Notes */}
+                        {detectionNotes.length > 0 && !detectingQuestions && (
+                          <div className="rounded-xl bg-amber-50 border border-amber-300 p-4 space-y-2 text-[15.5px] text-amber-950 leading-relaxed">
+                            {detectionNotes.map((n, idx) => (
+                              <div key={idx} className="flex items-start gap-2">
+                                <Info className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                                <span>{n}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Clean + THÊM CÂU HỎI Menu (all 14 question types tucked cleanly inside) */}
+                        <div className="pt-3 border-t border-slate-200 space-y-3">
+                          <div className="text-[15.5px] text-slate-700">
+                            Hoặc thầy cô tự thêm từng câu hỏi trực tiếp lên trang PDF:
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowAddQuestionMenu((v) => !v)}
+                            className="w-full inline-flex items-center justify-center gap-2 min-h-[48px] px-4 rounded-xl border-2 border-[#164E63] bg-white hover:bg-[#E6F1EF] text-[#164E63] font-bold text-[16px] cursor-pointer"
+                          >
+                            <Plus className="w-5 h-5" />
+                            <span>+ THÊM CÂU HỎI</span>
+                          </button>
+
+                          {showAddQuestionMenu && (
+                            <div className="rounded-xl border border-slate-200 bg-[#F8FBFA] p-3 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[15.5px] font-bold text-[#164E63]">
+                                  Chọn loại câu hỏi (14 dạng)
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowAddQuestionMenu(false);
+                                    setPlacingType(null);
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg text-[14.5px] font-bold text-slate-700 hover:bg-slate-200 cursor-pointer"
+                                >
+                                  Đóng
+                                </button>
+                              </div>
+                              <p className="text-[14.5px] text-slate-700">
+                                Chọn 1 dạng bên dưới rồi nhấn vào vị trí cần trả lời trên trang PDF bên phải:
+                              </p>
+                              <div className="grid grid-cols-1 gap-1.5">
+                                {ALL_QUESTION_TYPES.map((qType) => {
+                                  const meta = QUESTION_TYPE_META[qType];
+                                  const active = placingType === qType;
+                                  return (
+                                    <button
+                                      key={qType}
+                                      type="button"
+                                      onClick={() => setPlacingType(active ? null : qType)}
+                                      className={`flex items-center justify-between gap-2 px-3.5 min-h-[44px] rounded-xl border text-left text-[15.5px] font-semibold transition-colors cursor-pointer ${
+                                        active
+                                          ? 'bg-[#087F70] border-[#087F70] text-white'
+                                          : 'bg-white border-slate-200 text-slate-900 hover:border-[#087F70] hover:bg-teal-50/50'
+                                      }`}
+                                    >
+                                      <span>{meta.shortLabel}</span>
+                                      <span
+                                        className={`text-[13.5px] px-2 py-0.5 rounded-md font-bold shrink-0 ${
+                                          active
+                                            ? 'bg-white/20 text-white'
+                                            : meta.autoGradable === 'manual'
+                                              ? 'bg-amber-50 text-amber-900'
+                                              : 'bg-teal-50 text-[#087F70]'
+                                        }`}
+                                      >
+                                        {meta.autoGradable === 'manual' ? 'GV chấm' : 'Chấm nhanh'}
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Step 2 Navigation */}
+                        <div className="pt-3 border-t border-slate-200 grid grid-cols-2 gap-2.5">
+                          <button
+                            type="button"
+                            onClick={() => setAuthorStep(1)}
+                            className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-3 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-bold text-[15.5px] cursor-pointer"
+                          >
+                            <ArrowLeft className="w-4 h-4" />
+                            <span>Quay lại Bước 1</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAuthorStep(3)}
+                            className="inline-flex items-center justify-center gap-1.5 min-h-[48px] px-3 rounded-xl bg-[#164E63] hover:bg-[#113d4d] text-white font-bold text-[15.5px] cursor-pointer"
+                          >
+                            <span>Sang Bước 3</span>
+                            <ArrowRight className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ===================== STEP 3: KIỂM TRA VÀ GIAO BÀI ===================== */}
+                    {authorStep === 3 && authorWorksheet && (
+                      <div className="space-y-5">
+                        <div className="space-y-1.5">
+                          <h2 className="text-[21px] font-bold text-[#164E63]">
+                            3. Kiểm tra và giao bài
+                          </h2>
+                          <p className="text-[16px] text-slate-700 leading-relaxed">
+                            Thầy cô xem lại các câu hỏi. Nếu đúng, hãy lưu PDF để gửi cho học sinh.
+                          </p>
+                        </div>
+
+                        {/* Worksheet Title */}
+                        <label className="block space-y-1.5">
+                          <span className="block text-[15.5px] font-bold text-[#164E63]">
+                            Tên bài tập
+                          </span>
+                          <input
+                            type="text"
+                            value={authorWorksheet.title}
+                            onChange={(e) =>
+                              setAuthorWorksheet({ ...authorWorksheet, title: e.target.value })
+                            }
+                            placeholder="Nhập tên bài tập..."
+                            className="w-full min-h-[46px] rounded-xl border border-slate-300 bg-white px-3.5 text-[16px] font-bold text-[#164E63] focus:border-[#087F70] outline-none"
+                          />
+                        </label>
+
+                        {/* Actionable Alert Banner (if teacher clicks Save/Assign before questions exist) */}
+                        {authorActionAlert && (
+                          <div className="rounded-xl bg-amber-50 border-2 border-amber-400 p-4 space-y-2.5 text-[15.5px] text-amber-950">
+                            <div className="font-bold flex items-start gap-2">
+                              <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                              <span>{authorActionAlert.title}</span>
+                            </div>
+                            <p className="leading-relaxed">{authorActionAlert.detail}</p>
+                            <button
+                              type="button"
+                              onClick={authorActionAlert.onAction}
+                              className="w-full min-h-[44px] rounded-xl bg-[#087F70] hover:bg-[#06695d] text-white font-bold text-[15.5px] cursor-pointer"
+                            >
+                              {authorActionAlert.actionLabel}
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Post-Save Confirmation & Short Zalo Reminder */}
+                        {justSavedStudentPdfName && (
+                          <div className="rounded-xl bg-emerald-50 border border-emerald-300 p-4 space-y-1.5 text-[15.5px] text-emerald-950">
+                            <div className="font-bold flex items-center gap-2">
+                              <CheckCircle2 className="w-5 h-5 text-emerald-700 shrink-0" />
+                              <span>Đã lưu tệp PDF bài tập thành công!</span>
+                            </div>
+                            <p className="leading-relaxed">
+                              Tên tệp: <strong>{justSavedStudentPdfName}</strong>. Thầy cô hãy mở Zalo lớp → nhấn kẹp giấy <strong>Gửi tệp</strong> để gửi cho học sinh.
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Primary 4 Action Buttons (min 48px, never crowded) */}
+                        <div className="space-y-2.5">
+                          <div className="grid grid-cols-2 gap-2.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAuthorPreviewStudent(true);
+                                setPlacingType(null);
+                              }}
+                              className="inline-flex items-center justify-center gap-2 min-h-[48px] px-3 rounded-xl border-2 border-[#164E63] bg-white hover:bg-[#E6F1EF] text-[#164E63] font-bold text-[15.5px] cursor-pointer"
+                            >
+                              <Eye className="w-5 h-5" />
+                              <span>Xem thử bài tập</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={authorWorksheet.questions.length === 0}
+                              onClick={() => {
+                                const firstUnchecked =
+                                  authorWorksheet.questions.find((q) => !q.teacherApproved) ||
+                                  authorWorksheet.questions[0];
+                                if (firstUnchecked) openQuestionForEdit(firstUnchecked.id);
+                              }}
+                              className="inline-flex items-center justify-center gap-2 min-h-[48px] px-3 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-45 text-slate-800 font-bold text-[15.5px] cursor-pointer"
+                            >
+                              <Edit3 className="w-5 h-5 text-[#087F70]" />
+                              <span>Sửa câu hỏi</span>
+                            </button>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={handleExportStudentPackage}
+                            className="w-full inline-flex items-center justify-center gap-2 min-h-[52px] px-4 rounded-xl bg-[#087F70] hover:bg-[#06695d] text-white font-bold text-[17px] cursor-pointer shadow-sm"
+                          >
+                            <FileDown className="w-5 h-5" />
+                            <span>Lưu PDF</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={handleProceedToAssign}
+                            className="w-full inline-flex items-center justify-center gap-2 min-h-[48px] px-4 rounded-xl bg-[#164E63] hover:bg-[#113d4d] text-white font-bold text-[16px] cursor-pointer"
+                          >
+                            <Send className="w-5 h-5" />
+                            <span>Giao bài</span>
+                          </button>
+                        </div>
+
+                        {/* Question Review List */}
+                        <div className="pt-3 border-t border-slate-200 space-y-3">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <div className="text-[17px] font-bold text-[#164E63] flex items-center gap-2">
+                              <ListChecks className="w-5 h-5 text-[#087F70]" />
+                              <span>Danh sách câu hỏi ({authorReviewStats.total})</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setShowAddQuestionMenu((v) => !v)}
+                              className="inline-flex items-center gap-1.5 px-3 min-h-[40px] rounded-xl border border-[#087F70] bg-teal-50 hover:bg-teal-100 text-[#164E63] font-bold text-[14.5px] cursor-pointer"
+                            >
+                              <Plus className="w-4 h-4" />
+                              <span>Thêm câu hỏi</span>
+                            </button>
+                          </div>
+
+                          {showAddQuestionMenu && (
+                            <div className="rounded-xl border border-slate-200 bg-[#F8FBFA] p-3 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[15px] font-bold text-[#164E63]">
+                                  Chọn dạng câu hỏi rồi nhấn vào trang PDF:
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowAddQuestionMenu(false);
+                                    setPlacingType(null);
+                                  }}
+                                  className="px-2 py-1 rounded-lg text-[14px] font-bold text-slate-700 hover:bg-slate-200 cursor-pointer"
+                                >
+                                  Đóng
+                                </button>
+                              </div>
+                              <div className="grid grid-cols-1 gap-1.5 max-h-64 overflow-y-auto pr-1">
+                                {ALL_QUESTION_TYPES.map((qType) => {
+                                  const meta = QUESTION_TYPE_META[qType];
+                                  const active = placingType === qType;
+                                  return (
+                                    <button
+                                      key={qType}
+                                      type="button"
+                                      onClick={() => setPlacingType(active ? null : qType)}
+                                      className={`flex items-center justify-between gap-2 px-3 min-h-[42px] rounded-lg border text-left text-[15px] font-semibold cursor-pointer ${
+                                        active
+                                          ? 'bg-[#087F70] border-[#087F70] text-white'
+                                          : 'bg-white border-slate-200 text-slate-900 hover:border-[#087F70]'
+                                      }`}
+                                    >
+                                      <span>{meta.shortLabel}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {authorReviewStats.total > 0 &&
+                            authorReviewStats.approved < authorReviewStats.total && (
+                              <button
+                                type="button"
+                                onClick={approveAllAuthorQuestions}
+                                className="w-full min-h-[44px] px-3.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-900 font-bold text-[15px] cursor-pointer"
+                              >
+                                Đánh dấu đã kiểm tra tất cả ({authorReviewStats.total - authorReviewStats.approved} câu còn lại)
+                              </button>
+                            )}
+
+                          {authorWorksheet.questions.length === 0 ? (
+                            <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 space-y-3 text-[15.5px] text-slate-700">
+                              <p>Chưa tạo bài tập. Thầy cô hãy nhấn Tạo bài tập tự động.</p>
+                              <button
+                                type="button"
+                                onClick={() => setAuthorStep(2)}
+                                className="w-full min-h-[46px] rounded-xl bg-[#087F70] hover:bg-[#06695d] text-white font-bold text-[16px] cursor-pointer"
+                              >
+                                Quay lại Bước 2 để tạo bài tập
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              {authorWorksheet.questions.map((q) => {
+                                const needsCheck = !q.teacherApproved;
+                                return (
+                                  <button
+                                    key={q.id}
+                                    type="button"
+                                    onClick={() => openQuestionForEdit(q.id)}
+                                    className={`w-full text-left rounded-xl border p-3.5 transition-colors cursor-pointer space-y-1.5 ${
+                                      needsCheck
+                                        ? 'border-amber-300 bg-amber-50/40 hover:border-amber-500'
+                                        : 'border-slate-200 bg-white hover:border-[#087F70]'
+                                    }`}
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="font-bold text-[16px] text-[#164E63] truncate">
+                                        {q.code} · {QUESTION_TYPE_META[q.type].shortLabel}
+                                      </span>
+                                      <span className="text-[15px] font-bold text-slate-700 shrink-0">
+                                        {q.maxPoints} điểm
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-2 text-[14.5px]">
+                                      <span className="text-slate-600">
+                                        Trang {q.sourcePdfPageNumber ?? q.region.pageIndex + 1} · Nhấn để sửa
+                                      </span>
+                                      {q.teacherApproved ? (
+                                        <span className="px-2.5 py-0.5 rounded-md bg-emerald-100 text-emerald-900 font-bold">
+                                          Đã kiểm tra
+                                        </span>
+                                      ) : (
+                                        <span className="px-2.5 py-0.5 rounded-md bg-amber-100 text-amber-950 font-bold">
+                                          Cần kiểm tra
+                                        </span>
+                                      )}
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Collapsible Extra Settings + Auto-Save Status + Reset */}
+                        <div className="pt-3 border-t border-slate-200 space-y-3">
+                          {authorAutoSavedAt && (
+                            <div className="text-[14.5px] text-slate-600 flex items-center gap-1.5">
+                              <CheckCircle2 className="w-4 h-4 text-[#087F70]" />
+                              <span>
+                                Đã tự lưu trên máy lúc{' '}
+                                {new Date(authorAutoSavedAt).toLocaleTimeString('vi-VN', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </span>
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => setShowMoreSettings((v) => !v)}
+                            className="w-full flex items-center justify-between min-h-[44px] px-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-[15.5px] font-bold text-[#164E63] cursor-pointer"
+                          >
+                            <span>Cài đặt thêm (Môn, Lớp, Sao lưu GV)</span>
+                            {showMoreSettings ? (
+                              <ChevronUp className="w-5 h-5" />
+                            ) : (
+                              <ChevronDown className="w-5 h-5" />
+                            )}
+                          </button>
+
+                          {showMoreSettings && (
+                            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 space-y-3">
+                              <div className="grid grid-cols-2 gap-2.5">
+                                <label className="space-y-1">
+                                  <span className="block text-[14.5px] font-semibold text-slate-700">
+                                    Môn học
+                                  </span>
+                                  <select
+                                    value={authorWorksheet.subject}
+                                    onChange={(e) => {
+                                      const val = e.target.value as SubjectCategory;
+                                      const label =
+                                        SUBJECT_OPTIONS.find((s) => s.value === val)?.label ||
+                                        'Tổng hợp';
+                                      setAuthorWorksheet({
+                                        ...authorWorksheet,
+                                        subject: val,
+                                        subjectLabel: label,
+                                      });
+                                    }}
+                                    className="w-full min-h-[42px] rounded-lg border border-slate-300 bg-white px-2.5 text-[15px]"
+                                  >
+                                    {SUBJECT_OPTIONS.map((opt) => (
+                                      <option key={opt.value} value={opt.value}>
+                                        {opt.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="space-y-1">
+                                  <span className="block text-[14.5px] font-semibold text-slate-700">
+                                    Khối lớp
+                                  </span>
+                                  <select
+                                    value={authorWorksheet.grade}
+                                    onChange={(e) =>
+                                      setAuthorWorksheet({
+                                        ...authorWorksheet,
+                                        grade: Number(e.target.value) as GradeLevel,
+                                      })
+                                    }
+                                    className="w-full min-h-[42px] rounded-lg border border-slate-300 bg-white px-2.5 text-[15px]"
+                                  >
+                                    <option value={10}>Lớp 10</option>
+                                    <option value={11}>Lớp 11</option>
+                                    <option value={12}>Lớp 12</option>
+                                  </select>
+                                </label>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2.5">
+                                <label className="space-y-1">
+                                  <span className="block text-[14.5px] font-semibold text-slate-700">
+                                    Chế độ làm bài
+                                  </span>
+                                  <select
+                                    value={authorWorksheet.examMode}
+                                    onChange={(e) =>
+                                      setAuthorWorksheet({
+                                        ...authorWorksheet,
+                                        examMode: e.target.value as 'exam' | 'practice',
+                                      })
+                                    }
+                                    className="w-full min-h-[42px] rounded-lg border border-slate-300 bg-white px-2.5 text-[15px]"
+                                  >
+                                    <option value="exam">Kiểm tra</option>
+                                    <option value="practice">Luyện tập</option>
+                                  </select>
+                                </label>
+                                <label className="space-y-1">
+                                  <span className="block text-[14.5px] font-semibold text-slate-700">
+                                    Thời gian (phút)
+                                  </span>
+                                  <input
+                                    type="number"
+                                    min={5}
+                                    max={180}
+                                    value={authorWorksheet.durationMinutes}
+                                    onChange={(e) =>
+                                      setAuthorWorksheet({
+                                        ...authorWorksheet,
+                                        durationMinutes: Math.max(5, Number(e.target.value) || 30),
+                                      })
+                                    }
+                                    className="w-full min-h-[42px] rounded-lg border border-slate-300 bg-white px-2.5 text-[15px]"
+                                  />
+                                </label>
+                              </div>
+
+                              <label className="block space-y-1">
+                                <span className="block text-[14.5px] font-semibold text-slate-700">
+                                  Lời dặn học sinh
+                                </span>
+                                <textarea
+                                  rows={2}
+                                  value={authorWorksheet.instructions || ''}
+                                  onChange={(e) =>
+                                    setAuthorWorksheet({
+                                      ...authorWorksheet,
+                                      instructions: e.target.value,
+                                    })
+                                  }
+                                  placeholder="Ví dụ: Các em làm bài cẩn thận và gửi lại trước 20h..."
+                                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-[15px]"
+                                />
+                              </label>
+
+                              <button
+                                type="button"
+                                onClick={handleExportTeacherBackup}
+                                className="w-full inline-flex items-center justify-center gap-2 min-h-[44px] rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-[#164E63] font-bold text-[15px] cursor-pointer"
+                              >
+                                <Download className="w-4 h-4 text-[#087F70]" />
+                                <span>Tải bản sao lưu riêng cho giáo viên (.pdf)</span>
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Back to Step 2 & Safe Reset */}
+                          <div className="flex items-center justify-between gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setAuthorStep(2)}
+                              className="inline-flex items-center gap-1.5 px-3 min-h-[44px] rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-bold text-[15px] cursor-pointer"
+                            >
+                              <ArrowLeft className="w-4 h-4" />
+                              <span>Quay lại Bước 2</span>
+                            </button>
+
+                            {!confirmResetAuthor ? (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmResetAuthor(true)}
+                                className="inline-flex items-center gap-1.5 px-3 min-h-[44px] rounded-xl border border-slate-300 bg-white hover:bg-red-50 hover:text-red-700 text-slate-700 font-bold text-[15px] cursor-pointer"
+                              >
+                                <RotateCcw className="w-4 h-4" />
+                                <span>Làm lại</span>
+                              </button>
+                            ) : (
+                              <div className="flex items-center gap-1.5 bg-red-50 border border-red-300 rounded-xl p-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAuthorWorksheet({
+                                      ...authorWorksheet,
+                                      questions: [],
+                                      updatedAt: Date.now(),
+                                    });
+                                    setAuthorKeys({});
+                                    setSelectedAuthorQId(null);
+                                    setEditingQuestionSnapshot(null);
+                                    setConfirmResetAuthor(false);
+                                    setAuthorStep(2);
+                                    notify('Đã xóa danh sách câu hỏi để thầy cô tạo lại.', 'info');
+                                  }}
+                                  className="px-3 min-h-[38px] rounded-lg bg-red-600 text-white font-bold text-[14.5px] cursor-pointer"
+                                >
+                                  Xóa làm lại
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmResetAuthor(false)}
+                                  className="px-3 min-h-[38px] rounded-lg bg-white border border-slate-300 text-slate-800 font-bold text-[14.5px] cursor-pointer"
+                                >
+                                  Hủy
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
             </aside>
           )}
+
+          {/* Wide Right Area: Student Preview Banner (when active) + Spacious Multi-Page PDF Canvas */}
+          <div className="flex-1 flex flex-col min-w-0 min-h-0">
+            {authorPreviewStudent && (
+              <div className="bg-[#164E63] text-white px-5 py-3 flex items-center justify-between gap-3 flex-wrap shrink-0">
+                <div className="flex items-center gap-2.5 text-[17px] font-bold">
+                  <Eye className="w-6 h-6 text-teal-300 shrink-0" />
+                  <span>
+                    Đang xem thử như học sinh — Thầy cô có thể bấm thử các câu hỏi trên trang PDF bên dưới.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAuthorPreviewStudent(false)}
+                  className="inline-flex items-center gap-2 px-5 min-h-[46px] rounded-xl bg-white hover:bg-teal-50 text-[#164E63] font-bold text-[16px] cursor-pointer shadow-sm"
+                >
+                  <ArrowLeft className="w-5 h-5" />
+                  <span>QUAY LẠI CHỈNH SỬA</span>
+                </button>
+              </div>
+            )}
+
+            <InteractivePdfCanvas
+              pdfBytes={authorPdfBytes}
+              questions={authorWorksheet?.questions || []}
+              mode={authorPreviewStudent ? 'solve' : 'author'}
+              examMode={authorWorksheet?.examMode || 'exam'}
+              selectedQuestionId={authorPreviewStudent ? null : selectedAuthorQId}
+              answers={authorPreviewStudent ? authorPreviewAnswers : undefined}
+              teacherKeys={
+                authorPreviewStudent && authorWorksheet?.examMode === 'practice'
+                  ? authorKeys
+                  : undefined
+              }
+              placingTypeLabel={
+                !authorPreviewStudent && placingType
+                  ? QUESTION_TYPE_META[placingType].shortLabel
+                  : null
+              }
+              sourcePdfPages={authorSourcePages}
+              printedPageLabels={authorPrintedLabels}
+              scrollToQuestionNonce={authorScrollNonce}
+              onCancelPlacing={() => setPlacingType(null)}
+              onSelectQuestion={(id) => openQuestionForEdit(id)}
+              onPlaceAtPoint={handlePlaceQuestionAtPoint}
+              onUpdateRegion={(qId, patch) => {
+                const q = authorWorksheet?.questions.find((item) => item.id === qId);
+                if (q) updateAuthorQuestion(qId, { region: { ...q.region, ...patch } });
+              }}
+              onDeleteQuestion={deleteAuthorQuestion}
+              onChangeAnswer={(qId, next) =>
+                setAuthorPreviewAnswers((prev) => ({ ...prev, [qId]: next }))
+              }
+            />
+          </div>
         </div>
       )}
 
@@ -2272,8 +2939,9 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
             setAuthorPdfBytes(tw.pdfBytes);
             setRawUploadedPdfBytes(tw.pdfBytes);
             setRawPdfInfo(null);
-            setSelectedAuthorQId(tw.worksheet.questions[0]?.id || null);
-            setAuthorLeftTab('questions');
+            setSelectedAuthorQId(null);
+            setEditingQuestionSnapshot(null);
+            setAuthorStep(tw.worksheet.questions.length > 0 ? 3 : 2);
             setInteractiveTab('author');
           }}
           onOpenInGrade={(wsId) => {

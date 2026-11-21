@@ -387,44 +387,49 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
       {/* Top Bar */}
       <div
         onPointerDown={mode === 'author' ? startMove : undefined}
-        className={`px-2.5 py-1 flex items-center justify-between gap-2 text-[13px] font-semibold border-b ${
+        className={`px-3 py-1.5 flex items-center justify-between gap-2 text-[14.5px] font-semibold border-b ${
           mode === 'author'
             ? question.needsReview && !question.teacherApproved
-              ? 'bg-amber-100/90 text-amber-950 border-amber-300 cursor-move select-none'
+              ? 'bg-amber-100/95 text-amber-950 border-amber-300 cursor-move select-none'
               : 'bg-[#E6F1EF] text-[#164E63] border-teal-200 cursor-move select-none'
             : mode === 'grade'
               ? 'bg-red-50 text-[#991B1B] border-red-200 cursor-pointer'
               : 'bg-[#F4F8F7] text-[#164E63] border-slate-200'
         }`}
       >
-        <div className="flex items-center gap-1.5 min-w-0">
-          {mode === 'author' && <GripVertical className="w-3.5 h-3.5 text-[#087F70] shrink-0" />}
-          <span className="truncate">
+        <div className="flex items-center gap-2 min-w-0">
+          {mode === 'author' && <GripVertical className="w-4 h-4 text-[#087F70] shrink-0" />}
+          <span className="truncate font-bold">
             {question.code} · {QUESTION_TYPE_META[question.type].shortLabel}
           </span>
           {mode === 'author' && question.needsReview && !question.teacherApproved && (
-            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-amber-600 text-white text-[11px] font-bold shrink-0">
-              <AlertCircle className="w-3 h-3" />
-              <span>Cần GV kiểm tra</span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-600 text-white text-[12.5px] font-bold shrink-0">
+              <AlertCircle className="w-3.5 h-3.5" />
+              <span>Cần kiểm tra</span>
             </span>
           )}
           {mode === 'author' && question.teacherApproved && (
-            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-emerald-600 text-white text-[11px] font-bold shrink-0">
-              <CheckCircle2 className="w-3 h-3" />
-              <span>Đã duyệt</span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-700 text-white text-[12.5px] font-bold shrink-0">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>Đã kiểm tra</span>
             </span>
           )}
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           {mode === 'grade' && gradingDetail ? (
-            <span className="px-2 py-0.5 rounded bg-white border border-red-300 text-[#DC2626] font-bold text-[12.5px]">
+            <span className="px-2 py-0.5 rounded bg-white border border-red-300 text-[#DC2626] font-bold text-[13.5px]">
               {typeof gradingDetail.earnedPoints === 'number'
-                ? `${gradingDetail.earnedPoints} / ${gradingDetail.maxPoints}đ`
-                : `Chưa chấm / ${gradingDetail.maxPoints}đ`}
+                ? `${gradingDetail.earnedPoints} / ${gradingDetail.maxPoints} điểm`
+                : `Chưa chấm / ${gradingDetail.maxPoints} điểm`}
             </span>
           ) : (
-            <span className="text-[12.5px] font-medium text-slate-600">
-              {question.maxPoints}đ
+            <span className="text-[13.5px] font-semibold text-slate-700">
+              {question.maxPoints} điểm
+            </span>
+          )}
+          {mode === 'author' && !selected && (
+            <span className="text-[12.5px] font-semibold text-[#087F70] hidden sm:inline">
+              Nhấn để sửa
             </span>
           )}
           {mode === 'author' && onDeleteQuestion && (
@@ -435,10 +440,10 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                 e.stopPropagation();
                 onDeleteQuestion();
               }}
-              className="p-0.5 rounded hover:bg-red-100 text-slate-500 hover:text-red-600 cursor-pointer"
-              title="Xóa vùng câu hỏi"
+              className="p-1 rounded hover:bg-red-100 text-slate-600 hover:text-red-700 cursor-pointer"
+              title="Xóa câu hỏi này"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Trash2 className="w-4 h-4" />
             </button>
           )}
         </div>
