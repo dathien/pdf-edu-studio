@@ -56,9 +56,17 @@ import {
   Type,
   Underline,
   Undo2,
+  Map,
+  BarChart3,
+  Clock,
+  GitBranch,
+  Quote,
+  BookOpen,
+  Link2,
+  ListChecks,
 } from 'lucide-react';
 import { useStudioStore } from '../stores/useStudioStore';
-import type { ActiveTool, RibbonTabId } from '../types/studio';
+import type { ActiveTool, RibbonTabId, SubjectCategory } from '../types/studio';
 import {
   createNewBlankDocument,
   insertImageFileToActiveDoc,
@@ -67,6 +75,8 @@ import {
   quickSaveProjectBundle,
 } from '../services/documentActions';
 import { exportGradebookToExcel } from '../engines/grading/gradingEngine';
+import { getDiagramByKey } from '../engines/geometry/diagramLibrary';
+import { safeSanitizeSvgMarkup } from '../utils/svgSanitizer';
 import type { GuideGroupId } from '../features/help/guideData';
 
 const RIBBON_TABS: Array<{
@@ -217,10 +227,13 @@ export const RibbonToolbar: React.FC = () => {
   const setIsFullscreen = useStudioStore((s) => s.setIsFullscreen);
   const isFullscreen = useStudioStore((s) => s.isFullscreen);
   const gradedPapers = useStudioStore((s) => s.gradedPapers);
+  const addObject = useStudioStore((s) => s.addObject);
   const notify = useStudioStore((s) => s.notify);
 
   const openPdfRef = useRef<HTMLInputElement>(null);
   const insertImgRef = useRef<HTMLInputElement>(null);
+  const [showAudioLinkInput, setShowAudioLinkInput] = useState(false);
+  const [audioLinkUrl, setAudioLinkUrl] = useState('');
 
   const activeDoc = documents.find((d) => d.id === activeDocId) || null;
   const canUndo = !!activeDoc && activeDoc.historyIndex > 0;
@@ -229,6 +242,104 @@ export const RibbonToolbar: React.FC = () => {
 
   const pickTool = (tool: ActiveTool) => {
     setActiveTool(tool);
+  };
+
+  const insertSubjectDiagram = (diagramKey: string, subject: SubjectCategory, width = 320, height = 200) => {
+    if (!activeDoc) return;
+    const page = activeDoc.pages[activeDoc.currentPageIndex];
+    const item = getDiagramByKey(diagramKey);
+    if (!page || !item) return;
+    addObject({
+      id: `subj-diag-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+      type: 'diagram',
+      pageId: page.id,
+      x: Math.round(Math.max(40, (page.width - width) / 2)),
+      y: 165,
+      width,
+      height,
+      rotation: 0,
+      zIndex: 25,
+      opacity: 1,
+      title: item.title,
+      diagramKey: item.key,
+      subject,
+      svgMarkup: safeSanitizeSvgMarkup(item.render({ strokeColor: '#164E63', strokeWidth: 1.6, labels: [] })),
+      strokeColor: '#164E63',
+      strokeWidth: 1.6,
+      strokeStyle: 'solid',
+      labels: [],
+      sourceKind: 'library',
+    });
+    setActiveTool('select');
+    notify(`Đã chèn "${item.title}" vào trang hiện tại`, 'success');
+  };
+
+  const insertSubjectTable = (rows: string[][], label: string) => {
+    if (!activeDoc) return;
+    const page = activeDoc.pages[activeDoc.currentPageIndex];
+    if (!page) return;
+    addObject({
+      id: `subj-tbl-${Date.now()}`,
+      type: 'shape',
+      pageId: page.id,
+      x: 56,
+      y: 190,
+      width: 480,
+      height: Math.max(96, rows.length * 32),
+      rotation: 0,
+      zIndex: 24,
+      opacity: 1,
+      shapeKind: 'table',
+      strokeColor: '#164E63',
+      fillColor: '#FFFFFF',
+      strokeWidth: 1.2,
+      strokeStyle: 'solid',
+      tableRows: rows,
+    });
+    setActiveTool('select');
+    notify(`Đã chèn ${label} vào trang hiện tại`, 'success');
+  };
+
+  const insertSubjectCallout = (text: string, strokeColor: string, fillColor: string, notice: string) => {
+    if (!activeDoc) return;
+    const page = activeDoc.pages[activeDoc.currentPageIndex];
+    if (!page) return;
+    addObject({
+      id: `subj-box-${Date.now()}`,
+      type: 'shape',
+      pageId: page.id,
+      x: 64,
+      y: 180,
+      width: 340,
+      height: 76,
+      rotation: 0,
+      zIndex: 24,
+      opacity: 1,
+      shapeKind: 'callout',
+      strokeColor,
+      fillColor,
+      strokeWidth: 1.5,
+      strokeStyle: 'solid',
+      text,
+    });
+    setActiveTool('select');
+    notify(notice, 'success');
+  };
+
+  const handleInsertAudioLinkBox = () => {
+    const trimmed = audioLinkUrl.trim();
+    if (!trimmed) {
+      notify('Vui lòng nhập liên kết âm thanh (URL) của giáo viên trước khi chèn.', 'info');
+      return;
+    }
+    insertSubjectCallout(
+      `AUDIO LINK (Teacher Resource):\n${trimmed}`,
+      '#4338CA',
+      '#EEF2FF',
+      'Đã chèn khung liên kết âm thanh lên trang PDF'
+    );
+    setAudioLinkUrl('');
+    setShowAudioLinkInput(false);
   };
 
   return (
@@ -783,6 +894,230 @@ export const RibbonToolbar: React.FC = () => {
           <span className="hidden xl:inline">Cách dùng</span>
         </button>
       </div>
+
+      {/* Row 3: Contextual Subject Toolbar for Geography, History, and English */}
+      {activeDoc &&
+        (activeDoc.subjectHint === 'geography' ||
+          activeDoc.subjectHint === 'history' ||
+          activeDoc.subjectHint === 'english') && (
+          <div className="px-3 py-1.5 bg-[#F4F8F7] border-t border-slate-200 flex items-center flex-wrap gap-1.5 text-[14.5px]">
+            <span className="px-2.5 py-1 rounded-md bg-[#164E63] text-white font-semibold text-[13.5px] shrink-0">
+              {activeDoc.subjectHint === 'geography'
+                ? 'Công cụ môn Địa lí'
+                : activeDoc.subjectHint === 'history'
+                  ? 'Công cụ môn Lịch sử'
+                  : 'Công cụ môn Tiếng Anh'}
+            </span>
+
+            {activeDoc.subjectHint === 'geography' && (
+              <>
+                <RibbonBtn
+                  icon={<Map className="w-[18px] h-[18px] text-amber-700" />}
+                  label="Bản đồ"
+                  onClick={() => insertSubjectDiagram('geo-map-legend-compass', 'geography', 360, 210)}
+                />
+                <MoreToolsMenu
+                  label="Biểu đồ"
+                  items={[
+                    {
+                      label: 'Biểu đồ cột (Số liệu giả định)',
+                      icon: <BarChart3 className="w-4 h-4 text-[#087F70]" />,
+                      onClick: () => insertSubjectDiagram('geo-bar-chart-gdp', 'geography', 360, 220),
+                    },
+                    {
+                      label: 'Biểu đồ khí hậu Nhiệt độ – Lượng mưa',
+                      icon: <LineChart className="w-4 h-4 text-[#0284C7]" />,
+                      onClick: () => insertSubjectDiagram('geo-combo-climate', 'geography', 360, 220),
+                    },
+                    {
+                      label: 'Biểu đồ tròn cơ cấu (%)',
+                      icon: <Circle className="w-4 h-4 text-amber-600" />,
+                      onClick: () => insertSubjectDiagram('geo-pie-structure', 'geography', 340, 200),
+                    },
+                    {
+                      label: 'Khung lưới tọa độ vẽ biểu đồ',
+                      icon: <LayoutGrid className="w-4 h-4 text-[#164E63]" />,
+                      onClick: () => insertSubjectDiagram('geo-blank-chart-grid', 'geography', 360, 210),
+                    },
+                  ]}
+                />
+                <RibbonBtn
+                  icon={<Table className="w-[18px] h-[18px] text-[#164E63]" />}
+                  label="Bảng số liệu"
+                  onClick={() =>
+                    insertSubjectTable(
+                      [
+                        ['Chỉ tiêu (Số liệu giả định)', '2020', '2022', '2024'],
+                        ['Nông – Lâm – Thủy sản', '...', '...', '...'],
+                        ['Công nghiệp – Xây dựng', '...', '...', '...'],
+                        ['Dịch vụ', '...', '...', '...'],
+                      ],
+                      'Bảng số liệu địa lí'
+                    )
+                  }
+                />
+                <RibbonBtn
+                  icon={<MessageSquarePlus className="w-[18px] h-[18px] text-[#087F70]" />}
+                  label="Chú giải"
+                  onClick={() =>
+                    insertSubjectCallout(
+                      'CHÚ GIẢI: [■] Đối tượng A   |   [—] Đối tượng B   |   Nguồn: Số liệu giả định',
+                      '#087F70',
+                      '#F0FDFA',
+                      'Đã chèn hộp Chú giải địa lí'
+                    )
+                  }
+                />
+                <RibbonBtn
+                  icon={<ArrowRight className="w-[18px] h-[18px] text-[#DC2626]" />}
+                  label="Mũi tên & Nhãn"
+                  active={activeTool === 'shape-arrow'}
+                  onClick={() => {
+                    pickTool('shape-arrow');
+                    notify('Kéo thả trên trang PDF để vẽ mũi tên chỉ vị trí, sau đó dùng "Thêm văn bản" để gắn nhãn.', 'info');
+                  }}
+                />
+              </>
+            )}
+
+            {activeDoc.subjectHint === 'history' && (
+              <>
+                <RibbonBtn
+                  icon={<Clock className="w-[18px] h-[18px] text-orange-700" />}
+                  label="Dòng thời gian"
+                  onClick={() => insertSubjectDiagram('his-timeline-horizontal', 'history', 380, 190)}
+                />
+                <RibbonBtn
+                  icon={<GitBranch className="w-[18px] h-[18px] text-[#164E63]" />}
+                  label="Sơ đồ sự kiện"
+                  onClick={() => insertSubjectDiagram('his-cause-effect-flow', 'history', 380, 145)}
+                />
+                <RibbonBtn
+                  icon={<Table className="w-[18px] h-[18px] text-[#087F70]" />}
+                  label="Bảng so sánh"
+                  onClick={() =>
+                    insertSubjectTable(
+                      [
+                        ['Tiêu chí so sánh', 'Sự kiện / Giai đoạn 1', 'Sự kiện / Giai đoạn 2'],
+                        ['Bối cảnh', '...', '...'],
+                        ['Nội dung / Diễn biến', '...', '...'],
+                        ['Kết quả & Ý nghĩa', '...', '...'],
+                      ],
+                      'Bảng so sánh lịch sử'
+                    )
+                  }
+                />
+                <MoreToolsMenu
+                  label="Tư liệu & Hình ảnh"
+                  items={[
+                    {
+                      label: 'Chèn khung trích dẫn tư liệu có nguồn',
+                      icon: <Quote className="w-4 h-4 text-amber-700" />,
+                      onClick: () => insertSubjectDiagram('his-source-box', 'history', 360, 130),
+                    },
+                    {
+                      label: 'Chèn ảnh tư liệu lịch sử từ máy tính',
+                      icon: <ImagePlus className="w-4 h-4 text-[#087F70]" />,
+                      onClick: () => insertImgRef.current?.click(),
+                    },
+                  ]}
+                />
+                <RibbonBtn
+                  icon={<StickyNote className="w-[18px] h-[18px] text-amber-600" />}
+                  label="Ghi chú"
+                  active={activeTool === 'note'}
+                  onClick={() => pickTool('note')}
+                />
+              </>
+            )}
+
+            {activeDoc.subjectHint === 'english' && (
+              <>
+                <RibbonBtn
+                  icon={<Type className="w-[18px] h-[18px] text-indigo-700" />}
+                  label="Văn bản"
+                  active={activeTool === 'add-text'}
+                  onClick={() => pickTool('add-text')}
+                />
+                <RibbonBtn
+                  icon={<BookOpen className="w-[18px] h-[18px] text-[#087F70]" />}
+                  label="Bảng từ vựng"
+                  onClick={() =>
+                    insertSubjectTable(
+                      [
+                        ['Vocabulary / Collocation', 'POS / IPA', 'Meaning & Example'],
+                        ['sustainable', '(adj)', 'bền vững — sustainable cities'],
+                        ['digital literacy', '(n)', 'năng lực số'],
+                        ['...', '...', '...'],
+                      ],
+                      'Bảng từ vựng Tiếng Anh'
+                    )
+                  }
+                />
+                <RibbonBtn
+                  icon={<MessageSquarePlus className="w-[18px] h-[18px] text-[#164E63]" />}
+                  label="Khung câu hỏi"
+                  onClick={() =>
+                    insertSubjectCallout(
+                      'QUESTION PROMPT: Read the text carefully and answer questions 1–5.',
+                      '#164E63',
+                      '#F0F9FF',
+                      'Đã chèn khung câu hỏi Tiếng Anh'
+                    )
+                  }
+                />
+                <RibbonBtn
+                  icon={<Square className="w-[18px] h-[18px] text-[#087F70]" />}
+                  label="Khung trả lời"
+                  onClick={() => insertSubjectDiagram('eng-answer-frame', 'english', 360, 125)}
+                />
+                <RibbonBtn
+                  icon={<ListChecks className="w-[18px] h-[18px] text-[#DC2626]" />}
+                  label="Nhận xét & Tiêu chí"
+                  onClick={() => {
+                    insertSubjectDiagram('eng-writing-rubric', 'english', 350, 155);
+                    setRightPanelMode('grading');
+                  }}
+                />
+                <RibbonBtn
+                  icon={<Link2 className="w-[18px] h-[18px] text-indigo-700" />}
+                  label="Liên kết âm thanh"
+                  active={showAudioLinkInput}
+                  onClick={() => setShowAudioLinkInput((v) => !v)}
+                />
+
+                {showAudioLinkInput && (
+                  <div className="w-full mt-1 pt-1.5 border-t border-slate-200 flex items-center gap-2 flex-wrap">
+                    <span className="text-[13.5px] font-semibold text-slate-700">
+                      Gắn đường dẫn âm thanh của giáo viên:
+                    </span>
+                    <input
+                      type="url"
+                      value={audioLinkUrl}
+                      onChange={(e) => setAudioLinkUrl(e.target.value)}
+                      placeholder="https://... (liên kết tệp nghe thực tế của thầy/cô)"
+                      className="flex-1 min-w-[240px] max-w-md rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[14px] focus:border-[#087F70] outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleInsertAudioLinkBox}
+                      className="px-3 py-1 rounded-lg bg-[#087F70] hover:bg-[#06695d] text-white font-semibold text-[14px] cursor-pointer"
+                    >
+                      Chèn lên trang
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowAudioLinkInput(false)}
+                      className="px-2.5 py-1 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 text-[14px] cursor-pointer"
+                    >
+                      Đóng
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
       {/* Hidden inputs for file actions */}
       <input

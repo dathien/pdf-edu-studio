@@ -322,6 +322,24 @@ export const SUBJECT_SYMBOLS: Record<Exclude<SubjectCategory, 'general'>, Formul
     { label: 'Θ(n²)', latex: '\\Theta(n^2)', tooltip: 'Độ phức tạp Theta' },
     { label: 'mod', latex: 'a \\equiv b \\pmod{m}', tooltip: 'Đồng dư modulo' },
   ],
+  geography: [
+    { label: 'MĐDS', latex: 'D = \\frac{P}{S}\\;(\\text{người/km}^2)', tooltip: 'Mật độ dân số' },
+    { label: 'Tg (%)', latex: 'T_g = \\frac{S - T}{10}\\;(\\%)', tooltip: 'Tỉ suất gia tăng tự nhiên' },
+    { label: 'Năng suất', latex: 'N = \\frac{\\text{Sản lượng}\\times 10}{\\text{Diện tích}}\\;(\\text{tạ/ha})', tooltip: 'Năng suất cây trồng' },
+    { label: 'Tỉ trọng', latex: 'T\\% = \\frac{\\text{Thành phần}}{\\text{Tổng số}} \\times 100\\%', tooltip: 'Tỉ trọng cơ cấu' },
+    { label: '°C', latex: '^\\circ\\text{C}', tooltip: 'Độ C' },
+    { label: '‰', latex: '\\text{‰}', tooltip: 'Phần nghìn' },
+  ],
+  history: [
+    { label: 'TCN', latex: '\\text{TCN}', tooltip: 'Trước Công nguyên' },
+    { label: '→', latex: '\\longrightarrow', tooltip: 'Tiến trình sự kiện' },
+    { label: '⇒', latex: '\\Longrightarrow', tooltip: 'Hệ quả lịch sử' },
+  ],
+  english: [
+    { label: 'S + V', latex: 'S + V + O', tooltip: 'Basic sentence structure' },
+    { label: 'Passive', latex: 'S + \\text{be} + V_{3/\\text{ed}}', tooltip: 'Passive voice formula' },
+    { label: 'Cond 3', latex: '\\text{If } S + \\text{had} + V_3,\\; S + \\text{would have} + V_3', tooltip: 'Third conditional' },
+  ],
 };
 
 export const SUBJECT_TEMPLATES: Record<Exclude<SubjectCategory, 'general'>, FormulaTemplateItem[]> = {
@@ -438,6 +456,32 @@ export const SUBJECT_TEMPLATES: Record<Exclude<SubjectCategory, 'general'>, Form
       name: 'Chuyển đổi nhị phân sang thập phân',
       latex: '(1101)_2 = 1\\cdot 2^3 + 1\\cdot 2^2 + 0\\cdot 2^1 + 1\\cdot 2^0 = 13_{10}',
       typst: '(1101)_2 = 13_10',
+    },
+  ],
+  geography: [
+    {
+      name: 'Mật độ dân số',
+      latex: 'D = \\frac{\\text{Dân số}}{\\text{Diện tích}}\\;(\\text{người/km}^2)',
+    },
+    {
+      name: 'Tỉ suất gia tăng dân số tự nhiên',
+      latex: 'T_g = \\frac{S - T}{10}\\;(\\%)',
+    },
+    {
+      name: 'Tốc độ tăng trưởng (năm gốc = 100%)',
+      latex: 'I_t = \\frac{Y_t}{Y_0} \\times 100\\%',
+    },
+  ],
+  history: [
+    {
+      name: 'Trình tự phân tích sự kiện lịch sử',
+      latex: '\\text{Bối cảnh} \\longrightarrow \\text{Diễn biến} \\longrightarrow \\text{Kết quả} \\longrightarrow \\text{Ý nghĩa}',
+    },
+  ],
+  english: [
+    {
+      name: 'Double Comparative',
+      latex: '\\text{The + comparative} + S_1 + V_1,\\; \\text{the + comparative} + S_2 + V_2',
     },
   ],
 };

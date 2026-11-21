@@ -1,54 +1,167 @@
-import type { SubjectCategory } from '../types/studio';
+import type { GradeLevel, SubjectCategory } from '../types/studio';
 
 export interface SampleDocDescriptor {
   id: string;
   title: string;
   subtitle: string;
   subject: SubjectCategory;
+  subjectLabel: string;
+  grade: GradeLevel;
+  docType: string;
+  exerciseFormat: string;
+  pageCount: number;
   categoryLabel: string;
   isScannedSample?: boolean;
   isGradingSample?: boolean;
 }
 
+export interface SubjectCardMeta {
+  id: SubjectCategory;
+  label: string;
+  shortDesc: string;
+  accentBg: string;
+  accentText: string;
+  accentBorder: string;
+}
+
 /**
- * Lightweight metadata catalog for the 12 built-in practice documents.
+ * Eight THPT subjects displayed as uniform filter cards on the library page.
+ */
+export const SUBJECT_CARDS_8: SubjectCardMeta[] = [
+  {
+    id: 'math',
+    label: 'Toán',
+    shortDesc: 'Trắc nghiệm, tự luận, đồ thị & hình không gian',
+    accentBg: 'bg-teal-50',
+    accentText: 'text-[#087F70]',
+    accentBorder: 'border-teal-200',
+  },
+  {
+    id: 'physics',
+    label: 'Vật lí',
+    shortDesc: 'Công thức dao động, điện xoay chiều & mạch điện',
+    accentBg: 'bg-cyan-50',
+    accentText: 'text-[#164E63]',
+    accentBorder: 'border-cyan-200',
+  },
+  {
+    id: 'chemistry',
+    label: 'Hóa học',
+    shortDesc: 'Phương trình phản ứng, cân bằng & thí nghiệm',
+    accentBg: 'bg-emerald-50',
+    accentText: 'text-emerald-800',
+    accentBorder: 'border-emerald-200',
+  },
+  {
+    id: 'biology',
+    label: 'Sinh học',
+    shortDesc: 'Quang hợp, cấu trúc DNA & bài tập di truyền',
+    accentBg: 'bg-lime-50',
+    accentText: 'text-lime-800',
+    accentBorder: 'border-lime-200',
+  },
+  {
+    id: 'cs',
+    label: 'Tin học',
+    shortDesc: 'Logic Boolean, hệ nhị phân & độ phức tạp thuật toán',
+    accentBg: 'bg-sky-50',
+    accentText: 'text-sky-800',
+    accentBorder: 'border-sky-200',
+  },
+  {
+    id: 'geography',
+    label: 'Địa lí',
+    shortDesc: 'Bản đồ, biểu đồ, bảng số liệu & tính toán địa lí',
+    accentBg: 'bg-amber-50',
+    accentText: 'text-amber-800',
+    accentBorder: 'border-amber-200',
+  },
+  {
+    id: 'history',
+    label: 'Lịch sử',
+    shortDesc: 'Tư liệu lịch sử, dòng thời gian, so sánh & tự luận',
+    accentBg: 'bg-orange-50',
+    accentText: 'text-orange-800',
+    accentBorder: 'border-orange-200',
+  },
+  {
+    id: 'english',
+    label: 'Tiếng Anh',
+    shortDesc: 'Reading, Grammar, Word Form, Writing, Listening & Speaking',
+    accentBg: 'bg-indigo-50',
+    accentText: 'text-indigo-800',
+    accentBorder: 'border-indigo-200',
+  },
+];
+
+/**
+ * Lightweight metadata catalog for all 39 built-in practice PDF documents
+ * spanning 8 THPT subjects (Grades 10, 11, 12) + local OCR scan sample.
  * Kept strictly free of PDF.js, pdf-lib, and MathJax imports so the home screen
- * renders instantaneously without loading any heavy processing engine.
+ * renders instantaneously.
  */
 export const SAMPLE_DOCUMENTS: SampleDocDescriptor[] = [
+  // =========================================================================
+  // EXISTING 12 SAMPLE DOCUMENTS (5 NATURAL/CS SUBJECTS + GRADING + OCR)
+  // =========================================================================
   {
     id: 'sample-01-math-mcq',
     title: 'Đề kiểm tra Toán THPT – Trắc nghiệm',
     subtitle: 'Cấu trúc trắc nghiệm nhiều lựa chọn, Đúng/Sai 4 ý (2025) và Trả lời ngắn.',
     subject: 'math',
-    categoryLabel: 'Toán học · Trắc nghiệm',
+    subjectLabel: 'Toán',
+    grade: 12,
+    docType: 'Đề kiểm tra',
+    exerciseFormat: 'Trắc nghiệm nhiều lựa chọn & Đúng/Sai',
+    pageCount: 1,
+    categoryLabel: 'Toán · Trắc nghiệm',
   },
   {
     id: 'sample-02-math-essay',
     title: 'Đề kiểm tra Toán THPT – Tự luận',
     subtitle: '5 câu tự luận khảo sát hàm số, tích phân, xác suất có thang điểm 10.',
     subject: 'math',
-    categoryLabel: 'Toán học · Tự luận',
+    subjectLabel: 'Toán',
+    grade: 12,
+    docType: 'Đề kiểm tra',
+    exerciseFormat: 'Tự luận',
+    pageCount: 1,
+    categoryLabel: 'Toán · Tự luận',
   },
   {
     id: 'sample-03-math-space',
     title: 'Đề Toán có công thức và hình học không gian',
     subtitle: 'Bài toán hình chóp S.ABCD kèm công thức MathLive & hình chiếu vector chỉnh sửa được.',
     subject: 'math',
-    categoryLabel: 'Toán học · Hình không gian',
+    subjectLabel: 'Toán',
+    grade: 11,
+    docType: 'Đề kiểm tra',
+    exerciseFormat: 'Công thức & Hình không gian',
+    pageCount: 1,
+    categoryLabel: 'Toán · Hình không gian',
   },
   {
     id: 'sample-04-math-graph',
     title: 'Phiếu bài tập Toán có đồ thị hàm số',
     subtitle: 'Khảo sát sự biến thiên, cực trị và đồ thị hàm bậc ba, parabol.',
     subject: 'math',
-    categoryLabel: 'Toán học · Đồ thị',
+    subjectLabel: 'Toán',
+    grade: 12,
+    docType: 'Phiếu bài tập',
+    exerciseFormat: 'Khảo sát & Đồ thị hàm số',
+    pageCount: 1,
+    categoryLabel: 'Toán · Đồ thị',
   },
   {
     id: 'sample-05-phys-formula',
     title: 'Đề kiểm tra Vật lí có công thức',
     subtitle: 'Dao động điều hòa, mạch RLC xoay chiều kèm công thức vector chỉnh sửa được.',
     subject: 'physics',
+    subjectLabel: 'Vật lí',
+    grade: 12,
+    docType: 'Đề kiểm tra',
+    exerciseFormat: 'Bài tập công thức Vật lí',
+    pageCount: 1,
     categoryLabel: 'Vật lí · Công thức',
   },
   {
@@ -56,6 +169,11 @@ export const SAMPLE_DOCUMENTS: SampleDocDescriptor[] = [
     title: 'Phiếu bài tập Vật lí có sơ đồ mạch điện',
     subtitle: 'Phân tích mạch điện nối tiếp, song song và lực trên mặt phẳng nghiêng.',
     subject: 'physics',
+    subjectLabel: 'Vật lí',
+    grade: 11,
+    docType: 'Phiếu bài tập',
+    exerciseFormat: 'Sơ đồ mạch điện & Cơ học',
+    pageCount: 1,
     categoryLabel: 'Vật lí · Sơ đồ mạch',
   },
   {
@@ -63,6 +181,11 @@ export const SAMPLE_DOCUMENTS: SampleDocDescriptor[] = [
     title: 'Đề kiểm tra Hóa học có phương trình',
     subtitle: 'Cân bằng hóa học thuận nghịch, phản ứng ion rút gọn và tính pH.',
     subject: 'chemistry',
+    subjectLabel: 'Hóa học',
+    grade: 11,
+    docType: 'Đề kiểm tra',
+    exerciseFormat: 'Phương trình & Cân bằng hóa học',
+    pageCount: 1,
     categoryLabel: 'Hóa học · Phương trình',
   },
   {
@@ -70,6 +193,11 @@ export const SAMPLE_DOCUMENTS: SampleDocDescriptor[] = [
     title: 'Phiếu thí nghiệm Hóa học có hình dụng cụ',
     subtitle: 'Thí nghiệm chuẩn độ axit – bazơ với buret, bình tam giác và bộ thu khí.',
     subject: 'chemistry',
+    subjectLabel: 'Hóa học',
+    grade: 11,
+    docType: 'Phiếu thí nghiệm',
+    exerciseFormat: 'Thí nghiệm & Dụng cụ hóa học',
+    pageCount: 1,
     categoryLabel: 'Hóa học · Thí nghiệm',
   },
   {
@@ -77,6 +205,11 @@ export const SAMPLE_DOCUMENTS: SampleDocDescriptor[] = [
     title: 'Phiếu học tập Sinh học',
     subtitle: 'Quang hợp, cấu trúc DNA, sơ đồ lai và định luật di truyền.',
     subject: 'biology',
+    subjectLabel: 'Sinh học',
+    grade: 12,
+    docType: 'Phiếu học tập',
+    exerciseFormat: 'Bài tập di truyền & Quang hợp',
+    pageCount: 1,
     categoryLabel: 'Sinh học · Học liệu',
   },
   {
@@ -84,6 +217,11 @@ export const SAMPLE_DOCUMENTS: SampleDocDescriptor[] = [
     title: 'Phiếu học tập Tin học',
     subtitle: 'Biểu thức logic Boolean, hệ nhị phân và đánh giá độ phức tạp thuật toán.',
     subject: 'cs',
+    subjectLabel: 'Tin học',
+    grade: 10,
+    docType: 'Phiếu học tập',
+    exerciseFormat: 'Logic & Thuật toán',
+    pageCount: 1,
     categoryLabel: 'Tin học · Thuật toán',
   },
   {
@@ -91,7 +229,12 @@ export const SAMPLE_DOCUMENTS: SampleDocDescriptor[] = [
     title: 'Bài làm học sinh mẫu (Chấm tự luận)',
     subtitle: 'Bài làm tự luận có sẵn nội dung để chấm điểm, ghi nhận xét và xuất bảng điểm.',
     subject: 'math',
-    categoryLabel: 'Chấm bài · Tự luận',
+    subjectLabel: 'Toán',
+    grade: 12,
+    docType: 'Bài làm học sinh',
+    exerciseFormat: 'Tự luận',
+    pageCount: 1,
+    categoryLabel: 'Toán · Chấm tự luận',
     isGradingSample: true,
   },
   {
@@ -99,7 +242,363 @@ export const SAMPLE_DOCUMENTS: SampleDocDescriptor[] = [
     title: 'Tài liệu scan mẫu (OCR)',
     subtitle: 'Trang ảnh scan tiếng Việt dùng cho xử lý ảnh và nhận dạng văn bản OCR cục bộ.',
     subject: 'general',
+    subjectLabel: 'Khác / OCR',
+    grade: 10,
+    docType: 'Tài liệu scan OCR',
+    exerciseFormat: 'Nhận dạng văn bản OCR',
+    pageCount: 1,
     categoryLabel: 'OCR · Tài liệu scan',
     isScannedSample: true,
   },
+
+  // =========================================================================
+  // ĐỊA LÍ — 8 MẪU ĐỦ 8 DẠNG BÀI (LỚP 10, 11, 12)
+  // =========================================================================
+  {
+    id: 'sample-geo-01-mcq',
+    title: 'Phiếu trắc nghiệm Địa lí đại cương: Khí quyển, Thủy quyển & Dân cư',
+    subtitle: '10 câu trắc nghiệm nhiều lựa chọn phân mức Nhận biết – Thông hiểu – Vận dụng kèm đáp án.',
+    subject: 'geography',
+    subjectLabel: 'Địa lí',
+    grade: 10,
+    docType: 'Phiếu bài tập',
+    exerciseFormat: 'Trắc nghiệm kiến thức địa lí',
+    pageCount: 2,
+    categoryLabel: 'Địa lí 10 · Trắc nghiệm',
+  },
+  {
+    id: 'sample-geo-02-tf-data',
+    title: 'Bài tập Đúng/Sai dựa trên dữ liệu: Thiên nhiên & Chuyển dịch kinh tế',
+    subtitle: '3 câu Đúng/Sai 4 ý theo định dạng THPT 2025 kèm bảng số liệu giả định và hướng dẫn chấm.',
+    subject: 'geography',
+    subjectLabel: 'Địa lí',
+    grade: 12,
+    docType: 'Phiếu bài tập',
+    exerciseFormat: 'Đúng/Sai dựa trên dữ liệu',
+    pageCount: 2,
+    categoryLabel: 'Địa lí 12 · Đúng/Sai',
+  },
+  {
+    id: 'sample-geo-03-calc',
+    title: 'Bài tập tính toán Địa lí: Dân số, Năng suất & Tỉ trọng cơ cấu',
+    subtitle: '5 bài toán tính mật độ dân số, gia tăng tự nhiên, năng suất lúa và cán cân thương mại.',
+    subject: 'geography',
+    subjectLabel: 'Địa lí',
+    grade: 10,
+    docType: 'Phiếu bài tập',
+    exerciseFormat: 'Tính toán địa lí',
+    pageCount: 2,
+    categoryLabel: 'Địa lí 10 · Tính toán',
+  },
+  {
+    id: 'sample-geo-04-map',
+    title: 'Phiếu thực hành đọc và khai thác bản đồ (Lược đồ sơ phác)',
+    subtitle: 'Rèn kỹ năng đọc ký hiệu, xác định phương hướng, tính khoảng cách theo tỉ lệ và phân tích phân bố.',
+    subject: 'geography',
+    subjectLabel: 'Địa lí',
+    grade: 10,
+    docType: 'Phiếu thực hành',
+    exerciseFormat: 'Đọc và khai thác bản đồ',
+    pageCount: 2,
+    categoryLabel: 'Địa lí 10 · Bản đồ',
+  },
+  {
+    id: 'sample-geo-05-chart-analysis',
+    title: 'Bài tập phân tích biểu đồ sản lượng và biểu đồ khí hậu',
+    subtitle: 'Kèm biểu đồ cột và biểu đồ kết hợp nhiệt độ – lượng mưa (số liệu giả định) có thể chỉnh sửa.',
+    subject: 'geography',
+    subjectLabel: 'Địa lí',
+    grade: 12,
+    docType: 'Phiếu bài tập',
+    exerciseFormat: 'Phân tích biểu đồ',
+    pageCount: 2,
+    categoryLabel: 'Địa lí 12 · Phân tích biểu đồ',
+  },
+  {
+    id: 'sample-geo-06-table-data',
+    title: 'Bài tập xử lý bảng số liệu kinh tế – xã hội',
+    subtitle: 'Tính tốc độ tăng trưởng (%), cơ cấu tỉ trọng và rút ra nhận xét từ bảng số liệu giả định.',
+    subject: 'geography',
+    subjectLabel: 'Địa lí',
+    grade: 11,
+    docType: 'Phiếu bài tập',
+    exerciseFormat: 'Xử lý bảng số liệu',
+    pageCount: 2,
+    categoryLabel: 'Địa lí 11 · Bảng số liệu',
+  },
+  {
+    id: 'sample-geo-07-phenomenon',
+    title: 'Phiếu học tập nhận xét và giải thích hiện tượng địa lí tự nhiên – kinh tế',
+    subtitle: 'Giải thích chế độ mưa gió mùa, phân hóa theo độ cao và phân bố công nghiệp kèm khung chấm.',
+    subject: 'geography',
+    subjectLabel: 'Địa lí',
+    grade: 12,
+    docType: 'Phiếu học tập',
+    exerciseFormat: 'Nhận xét và giải thích hiện tượng',
+    pageCount: 2,
+    categoryLabel: 'Địa lí 12 · Giải thích hiện tượng',
+  },
+  {
+    id: 'sample-geo-08-draw-chart',
+    title: 'Phiếu thực hành vẽ biểu đồ trên hệ trục tọa độ',
+    subtitle: 'Xác định loại biểu đồ thích hợp, vẽ biểu đồ cột/tròn trên khung lưới vector và viết nhận xét.',
+    subject: 'geography',
+    subjectLabel: 'Địa lí',
+    grade: 11,
+    docType: 'Phiếu thực hành',
+    exerciseFormat: 'Thực hành vẽ biểu đồ',
+    pageCount: 2,
+    categoryLabel: 'Địa lí 11 · Vẽ biểu đồ',
+  },
+
+  // =========================================================================
+  // LỊCH SỬ — 8 MẪU ĐỦ 8 DẠNG BÀI (LỚP 10, 11, 12)
+  // =========================================================================
+  {
+    id: 'sample-his-01-mcq',
+    title: 'Đề trắc nghiệm Lịch sử Việt Nam (1945–1986) & Trật tự thế giới',
+    subtitle: '10 câu trắc nghiệm kiến thức chính xác theo chương trình THPT kèm đáp án chi tiết.',
+    subject: 'history',
+    subjectLabel: 'Lịch sử',
+    grade: 12,
+    docType: 'Đề kiểm tra',
+    exerciseFormat: 'Trắc nghiệm lịch sử',
+    pageCount: 2,
+    categoryLabel: 'Lịch sử 12 · Trắc nghiệm',
+  },
+  {
+    id: 'sample-his-02-tf-source',
+    title: 'Bài tập Đúng/Sai dựa trên tư liệu: Tuyên ngôn Độc lập (2/9/1945)',
+    subtitle: 'Khai thác đoạn trích xác thực từ Tuyên ngôn Độc lập và Nghị quyết Hội nghị TW 8 (5/1941).',
+    subject: 'history',
+    subjectLabel: 'Lịch sử',
+    grade: 12,
+    docType: 'Phiếu bài tập',
+    exerciseFormat: 'Đúng/Sai dựa trên tư liệu',
+    pageCount: 2,
+    categoryLabel: 'Lịch sử 12 · Đúng/Sai tư liệu',
+  },
+  {
+    id: 'sample-his-03-source-analysis',
+    title: 'Phiếu khai thác tư liệu lịch sử: Chiếu dời đô (1010) của Lý Công Uẩn',
+    subtitle: 'Phân tích đoạn trích Chiếu dời đô (Thiên đô chiếu) — bối cảnh, lý do chọn Đại La và ý nghĩa.',
+    subject: 'history',
+    subjectLabel: 'Lịch sử',
+    grade: 10,
+    docType: 'Phiếu học tập',
+    exerciseFormat: 'Khai thác tư liệu lịch sử',
+    pageCount: 2,
+    categoryLabel: 'Lịch sử 10 · Khai thác tư liệu',
+  },
+  {
+    id: 'sample-his-04-timeline',
+    title: 'Phiếu thực hành dòng thời gian Lịch sử Việt Nam (1930 – 1986)',
+    subtitle: 'Trục thời gian vector 5 mốc lớn kèm bài tập điền sự kiện, bối cảnh và ý nghĩa lịch sử.',
+    subject: 'history',
+    subjectLabel: 'Lịch sử',
+    grade: 12,
+    docType: 'Phiếu thực hành',
+    exerciseFormat: 'Bài tập dòng thời gian',
+    pageCount: 2,
+    categoryLabel: 'Lịch sử 12 · Dòng thời gian',
+  },
+  {
+    id: 'sample-his-05-ordering',
+    title: 'Bài tập sắp xếp sự kiện lịch sử theo trình tự thời gian',
+    subtitle: '3 chuỗi sự kiện về chống ngoại xâm thế kỷ X–XVIII, cận đại và hiện đại Việt Nam.',
+    subject: 'history',
+    subjectLabel: 'Lịch sử',
+    grade: 11,
+    docType: 'Phiếu bài tập',
+    exerciseFormat: 'Sắp xếp sự kiện lịch sử',
+    pageCount: 2,
+    categoryLabel: 'Lịch sử 11 · Sắp xếp sự kiện',
+  },
+  {
+    id: 'sample-his-06-comparison',
+    title: 'Phiếu so sánh: Kháng chiến chống Pháp (1945–1954) và chống Mỹ (1954–1975)',
+    subtitle: 'Bảng đối chiếu mục tiêu, đường lối, chiến thắng tiêu biểu và điểm tương đồng – khác biệt.',
+    subject: 'history',
+    subjectLabel: 'Lịch sử',
+    grade: 12,
+    docType: 'Phiếu học tập',
+    exerciseFormat: 'So sánh sự kiện, giai đoạn',
+    pageCount: 2,
+    categoryLabel: 'Lịch sử 12 · So sánh giai đoạn',
+  },
+  {
+    id: 'sample-his-07-essay',
+    title: 'Đề tự luận phân tích: Chiến thắng Điện Biên Phủ (1954) & Đổi mới (1986)',
+    subtitle: '2 câu tự luận chuyên sâu kèm sơ đồ phân tích sự kiện và hướng dẫn chấm điểm chi tiết.',
+    subject: 'history',
+    subjectLabel: 'Lịch sử',
+    grade: 12,
+    docType: 'Đề kiểm tra',
+    exerciseFormat: 'Tự luận phân tích',
+    pageCount: 2,
+    categoryLabel: 'Lịch sử 12 · Tự luận',
+    isGradingSample: true,
+  },
+  {
+    id: 'sample-his-08-application',
+    title: 'Phiếu học tập vận dụng: Bảo tồn di sản văn hóa Việt Nam được UNESCO ghi danh',
+    subtitle: 'Kết nối kiến thức lịch sử với thực tiễn bảo tồn Quần thể di tích Cố đô Huế, Hội An, Tràng An.',
+    subject: 'history',
+    subjectLabel: 'Lịch sử',
+    grade: 10,
+    docType: 'Phiếu học tập',
+    exerciseFormat: 'Vận dụng kiến thức lịch sử',
+    pageCount: 2,
+    categoryLabel: 'Lịch sử 10 · Vận dụng',
+  },
+
+  // =========================================================================
+  // TIẾNG ANH — 11 MẪU ĐỦ 11 DẠNG BÀI (LỚP 10, 11, 12)
+  // =========================================================================
+  {
+    id: 'sample-eng-01-mcq',
+    title: 'English Multiple-Choice Test: Phonetics, Grammar & Communication',
+    subtitle: '12 high-school standard MCQs covering pronunciation, stress, grammar and everyday exchanges.',
+    subject: 'english',
+    subjectLabel: 'Tiếng Anh',
+    grade: 12,
+    docType: 'Đề kiểm tra',
+    exerciseFormat: 'Multiple-choice questions',
+    pageCount: 2,
+    categoryLabel: 'Tiếng Anh 12 · Multiple-choice',
+  },
+  {
+    id: 'sample-eng-02-vocab-grammar',
+    title: 'Vocabulary & Grammar Worksheet: Environment and Sustainable Living',
+    subtitle: 'Focused drills on verb tenses, passive voice, relative clauses and topic collocations.',
+    subject: 'english',
+    subjectLabel: 'Tiếng Anh',
+    grade: 10,
+    docType: 'Phiếu bài tập',
+    exerciseFormat: 'Vocabulary & Grammar',
+    pageCount: 2,
+    categoryLabel: 'Tiếng Anh 10 · Vocab & Grammar',
+  },
+  {
+    id: 'sample-eng-03-gap-fill',
+    title: 'Gap-Filling Worksheet: Smart and Sustainable Cities of the Future',
+    subtitle: 'Guided cloze passage (word bank) and open cloze exercise with complete answer key.',
+    subject: 'english',
+    subjectLabel: 'Tiếng Anh',
+    grade: 11,
+    docType: 'Phiếu bài tập',
+    exerciseFormat: 'Gap-filling exercises',
+    pageCount: 2,
+    categoryLabel: 'Tiếng Anh 11 · Gap-filling',
+  },
+  {
+    id: 'sample-eng-04-reading',
+    title: 'Reading Comprehension: Digital Literacy and Lifelong Learning',
+    subtitle: 'Academic 3-paragraph passage with main-idea, detail, reference, vocabulary and inference questions.',
+    subject: 'english',
+    subjectLabel: 'Tiếng Anh',
+    grade: 12,
+    docType: 'Phiếu bài tập',
+    exerciseFormat: 'Reading comprehension',
+    pageCount: 2,
+    categoryLabel: 'Tiếng Anh 12 · Reading',
+  },
+  {
+    id: 'sample-eng-05-transformation',
+    title: 'Sentence Transformation Worksheet: Core High-School Structures',
+    subtitle: '10 sentence-rewriting and combining items (conditionals, reported speech, passive, inversion).',
+    subject: 'english',
+    subjectLabel: 'Tiếng Anh',
+    grade: 11,
+    docType: 'Phiếu bài tập',
+    exerciseFormat: 'Sentence transformation',
+    pageCount: 2,
+    categoryLabel: 'Tiếng Anh 11 · Transformation',
+  },
+  {
+    id: 'sample-eng-06-error-correction',
+    title: 'Error Correction Worksheet: Spotting and Fixing Grammar Mistakes',
+    subtitle: 'Identify the incorrect underlined part and rewrite accurately across 10 common error types.',
+    subject: 'english',
+    subjectLabel: 'Tiếng Anh',
+    grade: 10,
+    docType: 'Phiếu bài tập',
+    exerciseFormat: 'Error correction',
+    pageCount: 2,
+    categoryLabel: 'Tiếng Anh 10 · Error correction',
+  },
+  {
+    id: 'sample-eng-07-word-formation',
+    title: 'Word Formation Worksheet: Affixes and Parts of Speech',
+    subtitle: '10 contextual sentences plus a mini-passage requiring accurate noun, verb, adjective & adverb forms.',
+    subject: 'english',
+    subjectLabel: 'Tiếng Anh',
+    grade: 11,
+    docType: 'Phiếu bài tập',
+    exerciseFormat: 'Word formation',
+    pageCount: 2,
+    categoryLabel: 'Tiếng Anh 11 · Word formation',
+  },
+  {
+    id: 'sample-eng-08-matching',
+    title: 'Matching Exercises: Academic Vocabulary, Collocations & Functions',
+    subtitle: 'Three matching sections linking definitions, verb-noun collocations and polite responses.',
+    subject: 'english',
+    subjectLabel: 'Tiếng Anh',
+    grade: 10,
+    docType: 'Phiếu bài tập',
+    exerciseFormat: 'Matching exercises',
+    pageCount: 2,
+    categoryLabel: 'Tiếng Anh 10 · Matching',
+  },
+  {
+    id: 'sample-eng-09-writing',
+    title: 'Writing Task Sheet: Opinion Essay & 4-Criterion Teacher Rubric',
+    subtitle: 'Guided outline, writing lines and manual 4-criterion scoring rubric (Task, Coherence, Lexis, Grammar).',
+    subject: 'english',
+    subjectLabel: 'Tiếng Anh',
+    grade: 12,
+    docType: 'Phiếu luyện kỹ năng',
+    exerciseFormat: 'Writing tasks',
+    pageCount: 2,
+    categoryLabel: 'Tiếng Anh 12 · Writing',
+    isGradingSample: true,
+  },
+  {
+    id: 'sample-eng-10-listening',
+    title: 'Listening Worksheet: Community Volunteering (with Teacher Script)',
+    subtitle: 'Pre-listening, note-completion & True/False tasks; includes Teacher Audio Script and audio link box.',
+    subject: 'english',
+    subjectLabel: 'Tiếng Anh',
+    grade: 11,
+    docType: 'Phiếu luyện kỹ năng',
+    exerciseFormat: 'Listening worksheet',
+    pageCount: 2,
+    categoryLabel: 'Tiếng Anh 11 · Listening',
+  },
+  {
+    id: 'sample-eng-11-speaking',
+    title: 'Speaking Task Sheet: Cue Card, Discussion & Manual Scoring Rubric',
+    subtitle: 'Topic card on Green Lifestyle, follow-up questions and 4-criterion manual teacher assessment table.',
+    subject: 'english',
+    subjectLabel: 'Tiếng Anh',
+    grade: 12,
+    docType: 'Phiếu luyện kỹ năng',
+    exerciseFormat: 'Speaking task sheet',
+    pageCount: 2,
+    categoryLabel: 'Tiếng Anh 12 · Speaking',
+    isGradingSample: true,
+  },
 ];
+
+export const DOC_TYPE_OPTIONS: string[] = Array.from(
+  new Set(SAMPLE_DOCUMENTS.map((d) => d.docType))
+);
+
+export function getExerciseFormatsForFilter(subject: 'all' | SubjectCategory): string[] {
+  const list =
+    subject === 'all'
+      ? SAMPLE_DOCUMENTS
+      : SAMPLE_DOCUMENTS.filter((d) => d.subject === subject);
+  return Array.from(new Set(list.map((d) => d.exerciseFormat)));
+}

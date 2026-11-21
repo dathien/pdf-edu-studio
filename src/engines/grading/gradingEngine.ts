@@ -222,6 +222,75 @@ export const GRADING_STAMP_PRESETS: GradingStampPreset[] = [
   { code: 'good-format', label: 'Trình bày tốt', defaultColor: '#087F70' },
   { code: 'improved', label: 'Có tiến bộ', defaultColor: '#087F70' },
   { code: 'add-more', label: 'Cần bổ sung', defaultColor: '#D97706' },
+  // Subject-specific stamps for Geography, History, and English
+  { code: 'geo-data-ok', label: 'Đúng số liệu', defaultColor: '#059669' },
+  { code: 'geo-chart-miss', label: 'Thiếu tên/đơn vị biểu đồ', defaultColor: '#DC2626' },
+  { code: 'his-date-ok', label: 'Đúng mốc lịch sử', defaultColor: '#059669' },
+  { code: 'his-cite-source', label: 'Cần dẫn tư liệu', defaultColor: '#D97706' },
+  { code: 'eng-good-grammar', label: 'Good grammar', defaultColor: '#059669' },
+  { code: 'eng-check-spelling', label: 'Check spelling', defaultColor: '#DC2626' },
+  { code: 'eng-cohesion', label: 'Good cohesion', defaultColor: '#087F70' },
+];
+
+export interface SubjectRubricPreset {
+  id: string;
+  label: string;
+  subject: string;
+  scaleMax: number;
+  criteria: Array<{ label: string; maxScore: number }>;
+}
+
+/**
+ * Manual teacher rubric presets aligned to THPT Geography, History, and English assessment criteria.
+ * All scores are entered manually by the teacher.
+ */
+export const SUBJECT_RUBRIC_PRESETS: SubjectRubricPreset[] = [
+  {
+    id: 'eng-writing',
+    label: 'Tiếng Anh – Writing (4 tiêu chí)',
+    subject: 'Tiếng Anh',
+    scaleMax: 10,
+    criteria: [
+      { label: 'Task Response', maxScore: 2.5 },
+      { label: 'Coherence & Cohesion', maxScore: 2.5 },
+      { label: 'Lexical Resource', maxScore: 2.5 },
+      { label: 'Grammar Accuracy', maxScore: 2.5 },
+    ],
+  },
+  {
+    id: 'eng-speaking',
+    label: 'Tiếng Anh – Speaking (4 tiêu chí)',
+    subject: 'Tiếng Anh',
+    scaleMax: 10,
+    criteria: [
+      { label: 'Fluency & Coherence', maxScore: 2.5 },
+      { label: 'Pronunciation', maxScore: 2.5 },
+      { label: 'Lexical Resource', maxScore: 2.5 },
+      { label: 'Grammar Accuracy', maxScore: 2.5 },
+    ],
+  },
+  {
+    id: 'geo-analysis',
+    label: 'Địa lí – Tính toán, Biểu đồ & Giải thích',
+    subject: 'Địa lí',
+    scaleMax: 10,
+    criteria: [
+      { label: 'Công thức & Tính toán', maxScore: 3 },
+      { label: 'Biểu đồ / Bản đồ & Đơn vị', maxScore: 3 },
+      { label: 'Nhận xét & Giải thích', maxScore: 4 },
+    ],
+  },
+  {
+    id: 'his-essay',
+    label: 'Lịch sử – Tư liệu & Tự luận phân tích',
+    subject: 'Lịch sử',
+    scaleMax: 10,
+    criteria: [
+      { label: 'Chính xác mốc & sự kiện', maxScore: 3 },
+      { label: 'Khai thác tư liệu', maxScore: 3 },
+      { label: 'Phân tích & Đánh giá', maxScore: 4 },
+    ],
+  },
 ];
 
 export function exportGradebookToExcel(records: GradedPaperRecord[], fileName = 'Bang_diem_PDF_EDU_STUDIO.xlsx'): void {

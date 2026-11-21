@@ -248,7 +248,7 @@ export const DiagramLibraryPanel: React.FC<DiagramLibraryPanelProps> = ({ doc })
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Tìm tam giác, chóp, mạch điện, buret..."
+              placeholder="Tìm tam giác, mạch điện, biểu đồ, dòng thời gian, rubric..."
               className="w-full pl-8 pr-3 py-2 rounded-lg border border-slate-300 text-[14.5px] focus:border-[#087F70] outline-none"
             />
           </div>
@@ -260,6 +260,9 @@ export const DiagramLibraryPanel: React.FC<DiagramLibraryPanelProps> = ({ doc })
                 ['math', 'Toán'],
                 ['physics', 'Vật lí'],
                 ['chemistry', 'Hóa học'],
+                ['geography', 'Địa lí'],
+                ['history', 'Lịch sử'],
+                ['english', 'Tiếng Anh'],
               ] as const
             ).map(([id, label]) => (
               <button

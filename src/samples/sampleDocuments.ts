@@ -5,6 +5,7 @@ import { compileLatexToSvg } from '../engines/mathematics/formulaEngine';
 import { getDiagramByKey } from '../engines/geometry/diagramLibrary';
 import { createDefaultGradingSession } from '../engines/grading/gradingEngine';
 import { SAMPLE_DOCUMENTS, type SampleDocDescriptor } from './sampleCatalog';
+import { generateSocialEngSampleDocument } from './sampleDocsSocialEng';
 
 export { SAMPLE_DOCUMENTS };
 export type { SampleDocDescriptor };
@@ -186,6 +187,15 @@ async function createScannedOcrSamplePdf(): Promise<Uint8Array> {
 }
 
 export async function generateSampleDocument(sampleId: string): Promise<SampleBuildPayload> {
+  if (
+    sampleId.startsWith('sample-geo-') ||
+    sampleId.startsWith('sample-his-') ||
+    sampleId.startsWith('sample-eng-')
+  ) {
+    const built = await generateSocialEngSampleDocument(sampleId);
+    if (built) return built;
+  }
+
   if (sampleId === 'sample-12-scan-ocr') {
     const pdfBytes = await createScannedOcrSamplePdf();
     return { pdfBytes, initialObjects: () => [] };

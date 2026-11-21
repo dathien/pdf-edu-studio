@@ -17,6 +17,7 @@ import {
   exportGradebookToExcel,
   formatScoreVi,
   GRADING_STAMP_PRESETS,
+  SUBJECT_RUBRIC_PRESETS,
 } from '../../engines/grading/gradingEngine';
 import { useStudioStore } from '../../stores/useStudioStore';
 import type { RoundingMode, StudioDocument } from '../../types/studio';
@@ -291,6 +292,40 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                 <option value="1">Số nguyên</option>
               </select>
             </label>
+          </div>
+
+          {/* Subject Manual Rubric Presets */}
+          <div className="rounded-lg bg-[#F4F8F7] border border-teal-200/80 p-2.5 space-y-1.5">
+            <div className="text-[12.5px] font-semibold text-[#164E63]">
+              Áp dụng khung tiêu chí theo môn (giáo viên chấm thủ công):
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {SUBJECT_RUBRIC_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => {
+                    updateGradingSession((prev) => ({
+                      ...prev,
+                      subject: preset.subject,
+                      mode: 'essay',
+                      scaleMax: preset.scaleMax,
+                      questions: preset.criteria.map((c, idx) => ({
+                        id: `${preset.id}-${idx + 1}`,
+                        label: c.label,
+                        maxScore: c.maxScore,
+                        earnedScore: null,
+                        subParts: [],
+                      })),
+                    }));
+                    notify(`Đã áp dụng khung tiêu chí "${preset.label}"`, 'success');
+                  }}
+                  className="px-2 py-1 rounded-md bg-white border border-slate-200 hover:border-[#087F70] hover:bg-teal-50 text-[12px] font-medium text-slate-700 cursor-pointer transition-colors"
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Essay Questions Table */}

@@ -17,6 +17,9 @@ function detectSubjectHint(fileName: string): SubjectCategory {
   if (/(hoa|chem|axit|phan_ung|huu_co)/.test(lower)) return 'chemistry';
   if (/(sinh|bio|di_truyen|te_bao)/.test(lower)) return 'biology';
   if (/(tin|cs|code|thuat_toan|lap_trinh)/.test(lower)) return 'cs';
+  if (/(dia_li|diali|geo|ban_do|bieu_do)/.test(lower)) return 'geography';
+  if (/(lich_su|lichsu|hist|su_hoc|tu_lieu)/.test(lower)) return 'history';
+  if (/(tieng_anh|english|eng_|reading|listening|speaking|writing|grammar)/.test(lower)) return 'english';
   return 'general';
 }
 
@@ -155,6 +158,105 @@ export async function openSampleInStudio(sampleId: string): Promise<void> {
       detail,
       onRetry: () => {
         openSampleInStudio(sampleId);
+      },
+    });
+  } finally {
+    store.setBusy(null);
+  }
+}
+
+/**
+ * Generates a fresh, real PDF byte array for inline PDF.js preview on the Library screen
+ * without modifying any active workspace state.
+ */
+export async function buildSamplePreviewBytes(sampleId: string): Promise<Uint8Array> {
+  const { generateSampleDocument } = await loadSampleGenerator();
+  const built = await generateSampleDocument(sampleId);
+  return built.pdfBytes;
+}
+
+/**
+ * Generates a standalone copy of a sample document (embedding initial vector diagrams/formulas
+ * into the output PDF when present) and downloads it as a new .pdf file without mutating the template.
+ */
+export async function downloadSampleAsNewPdf(sampleId: string): Promise<void> {
+  const store = useStudioStore.getState();
+  const meta = SAMPLE_DOCUMENTS.find((s) => s.id === sampleId);
+  if (!meta) return;
+
+  store.setBusy(`Đang tạo bản sao PDF mới: ${meta.title}...`);
+  try {
+    const [{ generateSampleDocument }, { inspectPdfBytes, exportDocumentToPdf, triggerDownload }] =
+      await Promise.all([loadSampleGenerator(), loadPdfEngine()]);
+    const built = await generateSampleDocument(sampleId);
+    const inspected = await inspectPdfBytes(built.pdfBytes);
+    const firstPageId = inspected.pages[0]?.id || 'p-0';
+    const initialObjs = built.initialObjects(firstPageId);
+
+    let outBytes = built.pdfBytes;
+    if (initialObjs.length > 0) {
+      const tempDoc: StudioDocument = {
+        id: `export-sample-${sampleId}`,
+        title: meta.title,
+        fileName: `${sampleId}.pdf`,
+        originalPdfBytes: built.pdfBytes,
+        currentPdfBytes: built.pdfBytes,
+        pages: inspected.pages,
+        objects: initialObjs,
+        grading:
+          built.grading ||
+          (await import('../engines/grading/gradingEngine')).createDefaultGradingSession(
+            meta.title,
+            meta.subjectLabel
+          ),
+        watermark: {
+          enabled: false,
+          kind: 'text',
+          text: '',
+          fontSize: 36,
+          rotation: -35,
+          opacity: 0.14,
+          color: '#164E63',
+          position: 'center',
+          scope: 'all',
+        },
+        pageNumbers: {
+          enabled: false,
+          position: 'footer',
+          align: 'center',
+          startNumber: 1,
+          fontSize: 10,
+          color: '#475569',
+          format: 'number',
+        },
+        subjectHint: meta.subject,
+        zoom: 1,
+        viewMode: 'continuous',
+        currentPageIndex: 0,
+        isDirty: false,
+        isConfidential: false,
+        history: [],
+        historyIndex: 0,
+      };
+      const exported = await exportDocumentToPdf(tempDoc, {
+        includeAnnotations: true,
+        applyRedactions: false,
+        sanitizeMetadata: false,
+      });
+      outBytes = exported.bytes;
+    }
+
+    const outName = `${sampleId}_ban_sao.pdf`;
+    triggerDownload(new Blob([new Uint8Array(outBytes)], { type: 'application/pdf' }), outName);
+    store.notify(`Đã tải bản sao PDF mới "${outName}" (${inspected.pages.length} trang)`, 'success');
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    store.setPdfError({
+      title: 'Không thể lưu bản sao PDF',
+      message: 'Không thể tạo bản sao tài liệu PDF. Vui lòng thử lại.',
+      detail,
+      onRetry: () => {
+        downloadSampleAsNewPdf(sampleId);
       },
     });
   } finally {

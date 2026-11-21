@@ -38,7 +38,18 @@ export type ActiveTool =
   | 'signature'
   | 'redact';
 
-export type SubjectCategory = 'math' | 'physics' | 'chemistry' | 'biology' | 'cs' | 'general';
+export type SubjectCategory =
+  | 'math'
+  | 'physics'
+  | 'chemistry'
+  | 'biology'
+  | 'cs'
+  | 'geography'
+  | 'history'
+  | 'english'
+  | 'general';
+
+export type GradeLevel = 10 | 11 | 12;
 
 export type ViewMode = 'continuous' | 'single' | 'two-page';
 
