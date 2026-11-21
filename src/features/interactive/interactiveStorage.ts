@@ -1,5 +1,6 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type {
+  AssignmentRecord,
   GradedSubmissionRecord,
   InteractiveDraftRecord,
   TeacherWorksheetRecord,
@@ -21,6 +22,11 @@ interface InteractiveDbSchema extends DBSchema {
     value: GradedSubmissionRecord;
     indexes: { 'by-worksheet': string; 'by-imported': number };
   };
+  assignments: {
+    key: string;
+    value: AssignmentRecord;
+    indexes: { 'by-updated': number; 'by-worksheet': string };
+  };
 }
 
 export interface StorageOperationResult<T = void> {
@@ -31,7 +37,7 @@ export interface StorageOperationResult<T = void> {
 }
 
 const DB_NAME = 'pdf-edu-interactive-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase<InteractiveDbSchema>> | null = null;
 
@@ -52,6 +58,11 @@ function getDb(): Promise<IDBPDatabase<InteractiveDbSchema>> {
           const store = db.createObjectStore('submissions', { keyPath: 'submissionId' });
           store.createIndex('by-worksheet', 'worksheetId');
           store.createIndex('by-imported', 'importedAt');
+        }
+        if (!db.objectStoreNames.contains('assignments')) {
+          const store = db.createObjectStore('assignments', { keyPath: 'assignmentId' });
+          store.createIndex('by-updated', 'updatedAt');
+          store.createIndex('by-worksheet', 'worksheetId');
         }
       },
     });
@@ -124,6 +135,40 @@ export const interactiveStorage = {
     }
   },
 
+  // ---- Assignments ("Quản lý bài đã giao") ----
+  async saveAssignment(record: AssignmentRecord): Promise<StorageOperationResult> {
+    try {
+      const db = await getDb();
+      await db.put('assignments', {
+        ...record,
+        updatedAt: Date.now(),
+      });
+      return { ok: true };
+    } catch (err) {
+      return classifyStorageError(err);
+    }
+  },
+
+  async listAssignments(): Promise<AssignmentRecord[]> {
+    try {
+      const db = await getDb();
+      const all = await db.getAll('assignments');
+      return all.sort((a, b) => b.updatedAt - a.updatedAt);
+    } catch {
+      return [];
+    }
+  },
+
+  async deleteAssignment(assignmentId: string): Promise<StorageOperationResult> {
+    try {
+      const db = await getDb();
+      await db.delete('assignments', assignmentId);
+      return { ok: true };
+    } catch (err) {
+      return classifyStorageError(err);
+    }
+  },
+
   // ---- Student Drafts ("Bài đã lưu") ----
   async saveStudentDraft(record: InteractiveDraftRecord): Promise<StorageOperationResult> {
     try {
@@ -183,7 +228,7 @@ export const interactiveStorage = {
     }
   },
 
-  // ---- Teacher Imported Student Submissions ("Nhận và chấm bài") ----
+  // ---- Teacher Imported Student Submissions ("Thu bài & Chấm bài") ----
   async saveSubmission(record: GradedSubmissionRecord): Promise<StorageOperationResult> {
     try {
       const db = await getDb();

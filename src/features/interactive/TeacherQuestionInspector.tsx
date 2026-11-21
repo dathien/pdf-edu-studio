@@ -1,8 +1,9 @@
 import React from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Plus, Trash2 } from 'lucide-react';
 import {
   QUESTION_TYPE_META,
   type InteractiveQuestion,
+  type InteractiveQuestionType,
   type MatchingPair,
   type TeacherQuestionKey,
 } from '../../types/interactive';
@@ -12,15 +13,19 @@ interface TeacherQuestionInspectorProps {
   answerKey: TeacherQuestionKey | undefined;
   examMode: 'exam' | 'practice';
   onUpdateQuestion: (patch: Partial<InteractiveQuestion>) => void;
+  onChangeQuestionType: (nextType: InteractiveQuestionType) => void;
   onUpdateKey: (nextKey: TeacherQuestionKey) => void;
   onDeleteQuestion: () => void;
 }
+
+const ALL_TYPES = Object.keys(QUESTION_TYPE_META) as InteractiveQuestionType[];
 
 export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> = ({
   question,
   answerKey,
   examMode,
   onUpdateQuestion,
+  onChangeQuestionType,
   onUpdateKey,
   onDeleteQuestion,
 }) => {
@@ -36,22 +41,69 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
 
   return (
     <div className="p-4 space-y-4 text-[14.5px]">
-      <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200">
-        <div>
-          <div className="text-[13px] font-semibold text-[#087F70]">
-            {QUESTION_TYPE_META[question.type].label}
+      {/* Header + Approve Toggle */}
+      <div className="space-y-2.5 pb-3 border-b border-slate-200">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <div className="text-[13px] font-semibold text-[#087F70]">
+              Trang PDF {question.sourcePdfPageNumber || question.region.pageIndex + 1}
+              {question.printedPageLabel ? ` · Trang in ${question.printedPageLabel}` : ''}
+            </div>
+            <div className="text-[16.5px] font-bold text-[#164E63]">{question.code}</div>
           </div>
-          <div className="text-[16px] font-bold text-[#164E63]">{question.code}</div>
+          <button
+            type="button"
+            onClick={onDeleteQuestion}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 font-semibold text-[13.5px] cursor-pointer"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>Xóa</span>
+          </button>
         </div>
+
+        {question.detectionNote && (
+          <div className="rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-2 text-[13px] text-amber-950 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <span>{question.detectionNote}</span>
+          </div>
+        )}
+
         <button
           type="button"
-          onClick={onDeleteQuestion}
-          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 font-semibold text-[13.5px] cursor-pointer"
+          onClick={() =>
+            onUpdateQuestion({
+              teacherApproved: !question.teacherApproved,
+              needsReview: question.teacherApproved ? question.needsReview : false,
+            })
+          }
+          className={`w-full inline-flex items-center justify-center gap-1.5 py-2 rounded-lg font-semibold text-[14.5px] border transition-colors cursor-pointer ${
+            question.teacherApproved
+              ? 'bg-emerald-600 border-emerald-600 text-white'
+              : 'bg-white border-[#087F70] text-[#087F70] hover:bg-teal-50'
+          }`}
         >
-          <Trash2 className="w-4 h-4" />
-          <span>Xóa câu</span>
+          <CheckCircle2 className="w-4 h-4" />
+          <span>
+            {question.teacherApproved ? 'Đã xác nhận duyệt vùng này' : 'Xác nhận duyệt vùng câu hỏi'}
+          </span>
         </button>
       </div>
+
+      {/* Change Question Type (Section VI item 5) */}
+      <label className="block space-y-1">
+        <span className="block text-[13.5px] font-semibold text-slate-700">Loại câu hỏi (14 dạng)</span>
+        <select
+          value={question.type}
+          onChange={(e) => onChangeQuestionType(e.target.value as InteractiveQuestionType)}
+          className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[14px] font-semibold text-[#164E63]"
+        >
+          {ALL_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {QUESTION_TYPE_META[t].label}
+            </option>
+          ))}
+        </select>
+      </label>
 
       {/* Common metadata */}
       <div className="grid grid-cols-2 gap-2.5">
@@ -71,7 +123,9 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
             min={0.25}
             step={0.25}
             value={question.maxPoints}
-            onChange={(e) => onUpdateQuestion({ maxPoints: Math.max(0.25, Number(e.target.value) || 1) })}
+            onChange={(e) =>
+              onUpdateQuestion({ maxPoints: Math.max(0.25, Number(e.target.value) || 1) })
+            }
             className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-[14px]"
           />
         </label>
@@ -88,7 +142,7 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
       </label>
 
       <label className="block space-y-1">
-        <span className="block text-[13.5px] font-semibold text-slate-700">Yêu cầu / Đề bài ngắn</span>
+        <span className="block text-[13.5px] font-semibold text-slate-700">Yêu cầu / Ghi chú hiển thị</span>
         <textarea
           rows={2}
           value={question.prompt}
@@ -100,10 +154,10 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
       {/* TYPE-SPECIFIC CONFIG & TEACHER ANSWER KEY */}
       <div className="pt-2 border-t border-slate-200 space-y-3">
         <div className="text-[14px] font-bold text-[#164E63]">
-          Cấu hình & Đáp án giáo viên (tách riêng khỏi tệp HS)
+          Đáp án & Thang điểm giáo viên (lưu tách riêng)
         </div>
 
-        {/* MCQ */}
+        {/* 1. MCQ Single */}
         {question.type === 'mcq' && (
           <div className="space-y-2">
             {(question.mcqOptions || []).map((opt, idx) => (
@@ -132,14 +186,78 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
           </div>
         )}
 
-        {/* TF */}
+        {/* 2. MCQ Multi */}
+        {question.type === 'mcq_multi' && (
+          <div className="space-y-2">
+            <label className="block space-y-1">
+              <span className="text-[13px] font-semibold text-slate-700">Quy tắc tính điểm nhiều đáp án</span>
+              <select
+                value={key.mcqMultiScoring || 'exact'}
+                onChange={(e) =>
+                  patchKey({ mcqMultiScoring: e.target.value as 'exact' | 'partial' })
+                }
+                className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-[13.5px]"
+              >
+                <option value="exact">Đúng đủ tất cả mới tính trọn điểm</option>
+                <option value="partial">Tính điểm từng phần (trừ đáp án chọn nhầm)</option>
+              </select>
+            </label>
+            {(question.mcqOptions || []).map((opt, idx) => {
+              const checked = (key.mcqMultiCorrectIds || []).includes(opt.id);
+              return (
+                <div key={opt.id} className="flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => {
+                      const prev = key.mcqMultiCorrectIds || [];
+                      const next = e.target.checked
+                        ? [...prev, opt.id]
+                        : prev.filter((id) => id !== opt.id);
+                      patchKey({ mcqMultiCorrectIds: next });
+                    }}
+                    className="accent-[#087F70] w-4 h-4 cursor-pointer"
+                  />
+                  <span className="font-bold text-[#164E63] w-5">{opt.label}.</span>
+                  <input
+                    type="text"
+                    value={opt.text}
+                    onChange={(e) => {
+                      const next = [...(question.mcqOptions || [])];
+                      next[idx] = { ...opt, text: e.target.value };
+                      onUpdateQuestion({ mcqOptions: next });
+                    }}
+                    className="flex-1 rounded-md border border-slate-300 px-2 py-1 text-[13.5px]"
+                  />
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* 3. TF with Configurable Scoring Rubric */}
         {question.type === 'tf' && (
           <div className="space-y-2">
+            <label className="block space-y-1">
+              <span className="text-[13px] font-semibold text-slate-700">Thang điểm Đúng/Sai</span>
+              <select
+                value={key.tfScoringMode || 'equal'}
+                onChange={(e) =>
+                  patchKey({ tfScoringMode: e.target.value as 'thpt_4' | 'equal' | 'custom' })
+                }
+                className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-[13.5px]"
+              >
+                <option value="equal">Chia đều điểm cho từng ý</option>
+                <option value="thpt_4">Thang điểm THPT 4 ý (10% / 25% / 50% / 100%)</option>
+                <option value="custom">Tự nhập điểm riêng cho từng ý</option>
+              </select>
+            </label>
+
             {(question.tfStatements || []).map((st, idx) => {
-              const curKey = key.tfCorrectMap?.[st.id] || 'T';
+              const curKey = key.tfCorrectMap?.[st.id];
               return (
                 <div key={st.id} className="space-y-1 rounded-lg bg-slate-50 border border-slate-200 p-2">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center justify-between gap-1.5 flex-wrap">
                     <span className="font-bold text-[#164E63]">{st.label}</span>
                     <div className="flex items-center gap-1">
                       {(['T', 'F'] as const).map((v) => (
@@ -157,9 +275,27 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
                               : 'bg-white border-slate-300 text-slate-700'
                           }`}
                         >
-                          Đáp án: {v === 'T' ? 'Đúng' : 'Sai'}
+                          {v === 'T' ? 'Đúng' : 'Sai'}
                         </button>
                       ))}
+                      {key.tfScoringMode === 'custom' && (
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.25}
+                          value={key.tfItemPoints?.[st.id] ?? 0.5}
+                          onChange={(e) =>
+                            patchKey({
+                              tfItemPoints: {
+                                ...(key.tfItemPoints || {}),
+                                [st.id]: Math.max(0, Number(e.target.value) || 0),
+                              },
+                            })
+                          }
+                          className="w-16 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[12.5px]"
+                          title="Điểm của ý này"
+                        />
+                      )}
                     </div>
                   </div>
                   <input
@@ -178,7 +314,7 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
           </div>
         )}
 
-        {/* SHORT */}
+        {/* 4. SHORT */}
         {question.type === 'short' && (
           <div className="space-y-2">
             <label className="block space-y-1">
@@ -193,7 +329,7 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
             </label>
             <label className="block space-y-1">
               <span className="text-[13.5px] font-medium text-slate-700">
-                Các đáp án chấp nhận (phân cách bằng dấu chấm phẩy ;)
+                Các đáp án chấp nhận (phân cách bởi dấu chấm phẩy ;)
               </span>
               <input
                 type="text"
@@ -213,7 +349,53 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
           </div>
         )}
 
-        {/* FILL BLANK */}
+        {/* 5. NUMBER */}
+        {question.type === 'number' && (
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <label className="space-y-1">
+                <span className="text-[13px] font-semibold text-slate-700">Đáp số đúng</span>
+                <input
+                  type="number"
+                  step="any"
+                  value={typeof key.numberTarget === 'number' ? key.numberTarget : ''}
+                  onChange={(e) =>
+                    patchKey({
+                      numberTarget: e.target.value === '' ? undefined : Number(e.target.value),
+                    })
+                  }
+                  placeholder="VD: 12.5"
+                  className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-[13.5px]"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-[13px] font-semibold text-slate-700">Sai số (±)</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={key.numberTolerance ?? 0.01}
+                  onChange={(e) =>
+                    patchKey({ numberTolerance: Math.max(0, Number(e.target.value) || 0) })
+                  }
+                  className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-[13.5px]"
+                />
+              </label>
+            </div>
+            <label className="block space-y-1">
+              <span className="text-[13px] font-semibold text-slate-700">Đơn vị hiển thị</span>
+              <input
+                type="text"
+                value={question.numberUnit || ''}
+                onChange={(e) => onUpdateQuestion({ numberUnit: e.target.value })}
+                placeholder="Ví dụ: m/s, cm², %"
+                className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-[13.5px]"
+              />
+            </label>
+          </div>
+        )}
+
+        {/* 6. FILL BLANK */}
         {question.type === 'fill_blank' && (
           <div className="space-y-2">
             {(question.fillBlanks || []).map((slot, idx) => (
@@ -256,7 +438,7 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
                       },
                     })
                   }
-                  placeholder="Đáp án đúng cho ô này (cách nhau bởi ;)"
+                  placeholder="Đáp án đúng (cách nhau bởi ;)"
                   className="w-full rounded border border-teal-300 bg-white px-2 py-1 text-[13px]"
                 />
               </div>
@@ -280,7 +462,7 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
           </div>
         )}
 
-        {/* MATCHING (LINE OR DRAG-DROP) */}
+        {/* 7. MATCHING (LINE OR DRAG-DROP + PER-PAIR POINTS) */}
         {question.type === 'matching' && question.matching && (
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-1.5">
@@ -324,7 +506,7 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
                   }
                   className="accent-[#087F70]"
                 />
-                <span>Cho phép ghép nhiều – một (nhiều mục A nối chung 1 mục B)</span>
+                <span>Cho phép ghép nhiều – một</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -337,7 +519,7 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
                   }
                   className="accent-[#087F70]"
                 />
-                <span>Cho phép trộn thứ tự cột B</span>
+                <span>Trộn thứ tự cột B</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -352,15 +534,15 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
                   className="accent-[#087F70]"
                 />
                 <span className={examMode === 'exam' ? 'text-slate-400' : ''}>
-                  Phản hồi đúng/sai tức thì (chỉ bật ở chế độ Luyện tập)
+                  Phản hồi đúng/sai tức thì (chế độ Luyện tập)
                 </span>
               </label>
             </div>
 
-            {/* Items A & Key Mapping */}
+            {/* Items A, Key Mapping & Per-Pair Points */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <span className="font-semibold text-[#164E63]">Các cặp Cột A ↔ Đáp án Cột B</span>
+                <span className="font-semibold text-[#164E63]">Cặp Cột A ↔ Đáp án & Điểm từng cặp</span>
                 <button
                   type="button"
                   onClick={() => {
@@ -392,6 +574,7 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
                 const currentPair = (key.matchingCorrectPairs || []).find(
                   (p) => p.fromId === itemA.id
                 );
+                const pairKey = currentPair ? `${currentPair.fromId}->${currentPair.toId}` : '';
                 return (
                   <div
                     key={itemA.id}
@@ -412,9 +595,6 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
                       />
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[12.5px] font-semibold text-slate-600 shrink-0">
-                        Đáp án đúng:
-                      </span>
                       <select
                         value={currentPair?.toId || ''}
                         onChange={(e) => {
@@ -425,15 +605,36 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
                           if (toId) filtered.push({ fromId: itemA.id, toId });
                           patchKey({ matchingCorrectPairs: filtered });
                         }}
-                        className="flex-1 rounded border border-teal-300 bg-white px-2 py-1 text-[13px]"
+                        className="flex-1 rounded border border-teal-300 bg-white px-2 py-1 text-[12.5px]"
                       >
-                        <option value="">-- Chọn mục cột B --</option>
+                        <option value="">-- Chọn đáp án cột B --</option>
                         {question.matching!.itemsB.map((b, bIdx) => (
                           <option key={b.id} value={b.id}>
                             {String.fromCharCode(65 + bIdx)}. {b.label}
                           </option>
                         ))}
                       </select>
+                      {pairKey && (
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.25}
+                          value={
+                            key.matchingPairPoints?.[pairKey] ??
+                            Math.round((question.maxPoints / Math.max(1, question.matching!.itemsA.length)) * 100) / 100
+                          }
+                          onChange={(e) =>
+                            patchKey({
+                              matchingPairPoints: {
+                                ...(key.matchingPairPoints || {}),
+                                [pairKey]: Math.max(0, Number(e.target.value) || 0),
+                              },
+                            })
+                          }
+                          className="w-16 rounded border border-slate-300 bg-white px-1.5 py-1 text-[12.5px]"
+                          title="Điểm cho cặp ghép này"
+                        />
+                      )}
                     </div>
                   </div>
                 );
@@ -463,7 +664,7 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
           </div>
         )}
 
-        {/* ORDERING */}
+        {/* 8. ORDERING */}
         {question.type === 'ordering' && (
           <div className="space-y-2">
             {(question.orderingItems || []).map((item, idx) => (
@@ -481,16 +682,21 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
                 />
               </div>
             ))}
-            <div className="text-[12.5px] text-slate-600">
-              Thứ tự đúng (mã ổn định):{' '}
-              <span className="font-mono text-[#087F70]">
-                {(key.orderingCorrectIds || []).join(' → ') || 'Chưa thiết lập'}
-              </span>
-            </div>
+            <button
+              type="button"
+              onClick={() =>
+                patchKey({
+                  orderingCorrectIds: (question.orderingItems || []).map((i) => i.id),
+                })
+              }
+              className="px-2.5 py-1 rounded border border-[#087F70] text-[#087F70] bg-teal-50 text-[12.5px] font-semibold cursor-pointer"
+            >
+              Đặt thứ tự hiện tại làm đáp án đúng
+            </button>
           </div>
         )}
 
-        {/* MANUAL / RUBRIC NOTE FOR ESSAY, FORMULA, DRAWING, DIAGRAM, ATTACHMENT */}
+        {/* MANUAL / RUBRIC NOTE */}
         {(question.type === 'essay' ||
           question.type === 'formula' ||
           question.type === 'drawing' ||
@@ -498,7 +704,7 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
           question.type === 'attachment') && (
           <div className="space-y-1.5">
             <div className="rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-[13px] text-amber-900">
-              Dạng câu hỏi này được <strong>giáo viên chấm thủ công</strong> để đảm bảo chính xác chuyên môn.
+              Dạng câu hỏi này do <strong>giáo viên chấm thủ công</strong> để đảm bảo chính xác chuyên môn.
             </div>
             <label className="block space-y-1">
               <span className="text-[13.5px] font-medium text-slate-700">

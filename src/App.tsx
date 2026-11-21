@@ -95,6 +95,7 @@ export default function App() {
   const openGuide = useStudioStore((s) => s.openGuide);
   const closeGuide = useStudioStore((s) => s.closeGuide);
   const interactiveView = useStudioStore((s) => s.interactiveView);
+  const openInteractive = useStudioStore((s) => s.openInteractive);
   const closeInteractive = useStudioStore((s) => s.closeInteractive);
   const toasts = useStudioStore((s) => s.toasts);
   const dismissToast = useStudioStore((s) => s.dismissToast);
@@ -111,6 +112,14 @@ export default function App() {
   useEffect(() => {
     initLocalLibraries();
   }, [initLocalLibraries]);
+
+  // Open shared online worksheet link (?worksheetUrl=...) directly into the student solver
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('worksheetUrl')) {
+      openInteractive('solve');
+    }
+  }, [openInteractive]);
 
   // Redirect any legacy activeModal === 'help' trigger to the dedicated UserGuidePage
   useEffect(() => {

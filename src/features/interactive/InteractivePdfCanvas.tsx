@@ -26,6 +26,9 @@ interface InteractivePdfCanvasProps {
   teacherKeys?: TeacherAnswerKeyMap;
   gradingDetails?: Record<string, QuestionGradingDetail>;
   placingTypeLabel?: string | null;
+  sourcePdfPages?: number[];
+  printedPageLabels?: string[];
+  scrollToQuestionNonce?: number;
   onSelectQuestion?: (id: string | null) => void;
   onPlaceAtPoint?: (pageIndex: number, pdfX: number, pdfY: number) => void;
   onUpdateRegion?: (qId: string, patch: Partial<InteractiveQuestion['region']>) => void;
@@ -45,6 +48,8 @@ const SinglePdfPageCanvas: React.FC<{
   teacherKeys?: TeacherAnswerKeyMap;
   gradingDetails?: Record<string, QuestionGradingDetail>;
   placingActive: boolean;
+  sourcePdfPageNum?: number;
+  printedPageLabel?: string;
   onSelectQuestion?: (id: string | null) => void;
   onPlaceAtPoint?: (pageIndex: number, pdfX: number, pdfY: number) => void;
   onUpdateRegion?: (qId: string, patch: Partial<InteractiveQuestion['region']>) => void;
@@ -62,6 +67,8 @@ const SinglePdfPageCanvas: React.FC<{
   teacherKeys,
   gradingDetails,
   placingActive,
+  sourcePdfPageNum,
+  printedPageLabel,
   onSelectQuestion,
   onPlaceAtPoint,
   onUpdateRegion,
@@ -110,8 +117,15 @@ const SinglePdfPageCanvas: React.FC<{
 
   return (
     <div className="flex flex-col items-center gap-1.5">
-      <div className="text-[13.5px] font-semibold text-slate-600">
-        Trang {dim.pageIndex + 1}
+      <div className="flex items-center gap-2 text-[14px] font-semibold text-slate-700">
+        <span className="px-2.5 py-0.5 rounded-md bg-white border border-slate-300 text-[#164E63]">
+          Trang PDF {sourcePdfPageNum ?? dim.pageIndex + 1}
+        </span>
+        {printedPageLabel && (
+          <span className="px-2.5 py-0.5 rounded-md bg-[#E6F1EF] border border-teal-200 text-[#087F70]">
+            Trang in trên tài liệu: {printedPageLabel}
+          </span>
+        )}
       </div>
       <div
         style={{ width: `${cssW}px`, height: `${cssH}px` }}
@@ -172,6 +186,9 @@ export const InteractivePdfCanvas: React.FC<InteractivePdfCanvasProps> = ({
   teacherKeys,
   gradingDetails,
   placingTypeLabel,
+  sourcePdfPages,
+  printedPageLabels,
+  scrollToQuestionNonce,
   onSelectQuestion,
   onPlaceAtPoint,
   onUpdateRegion,
@@ -183,6 +200,18 @@ export const InteractivePdfCanvas: React.FC<InteractivePdfCanvasProps> = ({
   const [pageDims, setPageDims] = useState<PageDim[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll smoothly to selected question when teacher clicks in Left Question List
+  useEffect(() => {
+    if (!selectedQuestionId || !scrollToQuestionNonce) return;
+    const root = scrollContainerRef.current;
+    if (!root) return;
+    const target = root.querySelector(`[data-question-id="${CSS.escape(selectedQuestionId)}"]`);
+    if (target && 'scrollIntoView' in target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+    }
+  }, [selectedQuestionId, scrollToQuestionNonce]);
 
   useEffect(() => {
     let active = true;
@@ -277,7 +306,7 @@ export const InteractivePdfCanvas: React.FC<InteractivePdfCanvasProps> = ({
       </div>
 
       {/* Scrollable Multi-Page PDF Viewport */}
-      <div className="flex-1 overflow-auto p-5">
+      <div ref={scrollContainerRef} className="flex-1 overflow-auto p-5">
         {loading ? (
           <div className="h-full flex items-center justify-center">
             <div className="bg-white rounded-xl px-5 py-4 shadow-md flex items-center gap-3 text-[15.5px] font-semibold text-[#164E63]">
@@ -311,6 +340,8 @@ export const InteractivePdfCanvas: React.FC<InteractivePdfCanvasProps> = ({
                 teacherKeys={teacherKeys}
                 gradingDetails={gradingDetails}
                 placingActive={Boolean(placingTypeLabel)}
+                sourcePdfPageNum={sourcePdfPages?.[dim.pageIndex]}
+                printedPageLabel={printedPageLabels?.[dim.pageIndex]}
                 onSelectQuestion={onSelectQuestion}
                 onPlaceAtPoint={onPlaceAtPoint}
                 onUpdateRegion={onUpdateRegion}

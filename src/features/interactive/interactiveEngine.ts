@@ -164,6 +164,8 @@ export function sanitizeWorksheetForStudent(worksheet: InteractiveWorksheet): In
     tfStatements: q.tfStatements ? q.tfStatements.map((s) => ({ ...s })) : undefined,
     shortPlaceholder: q.shortPlaceholder,
     shortUnit: q.shortUnit,
+    numberUnit: q.numberUnit,
+    numberPlaceholder: q.numberPlaceholder,
     fillBlanks: q.fillBlanks ? q.fillBlanks.map((b) => ({ ...b })) : undefined,
     essayPlaceholder: q.essayPlaceholder,
     matching: q.matching
@@ -191,6 +193,9 @@ export function sanitizeWorksheetForStudent(worksheet: InteractiveWorksheet): In
     formulaPlaceholder: q.formulaPlaceholder,
     diagramPins: q.diagramPins ? q.diagramPins.map((p) => ({ ...p })) : undefined,
     attachmentAcceptHint: q.attachmentAcceptHint,
+    sourcePdfPageNumber: q.sourcePdfPageNumber,
+    printedPageLabel: q.printedPageLabel,
+    teacherApproved: q.teacherApproved,
   }));
 
   return {
@@ -200,10 +205,14 @@ export function sanitizeWorksheetForStudent(worksheet: InteractiveWorksheet): In
     subject: worksheet.subject,
     subjectLabel: worksheet.subjectLabel,
     grade: worksheet.grade,
+    className: worksheet.className,
     description: worksheet.description,
+    instructions: worksheet.instructions,
     teacherName: worksheet.teacherName,
     durationMinutes: worksheet.durationMinutes,
+    dueDate: worksheet.dueDate,
     examMode: worksheet.examMode,
+    pageMapping: worksheet.pageMapping ? { ...worksheet.pageMapping } : undefined,
     createdAt: worksheet.createdAt,
     updatedAt: worksheet.updatedAt,
     questions: cleanQuestions,
@@ -344,8 +353,12 @@ export async function exportStudentSubmissionPackage(params: {
       questionId: qId,
       updatedAt: ans.updatedAt || Date.now(),
       mcqSelectedId: ans.mcqSelectedId,
+      mcqMultiSelectedIds: Array.isArray(ans.mcqMultiSelectedIds)
+        ? ans.mcqMultiSelectedIds.map(String)
+        : undefined,
       tfAnswers: ans.tfAnswers ? { ...ans.tfAnswers } : undefined,
       shortText: ans.shortText,
+      numberValue: ans.numberValue,
       fillBlankAnswers: ans.fillBlankAnswers ? { ...ans.fillBlankAnswers } : undefined,
       essayText: ans.essayText,
       matchingPairs: ans.matchingPairs
@@ -656,8 +669,12 @@ export async function parseInteractivePackage(
         questionId: qId,
         updatedAt: Number(rawAns.updatedAt || Date.now()),
         mcqSelectedId: typeof rawAns.mcqSelectedId === 'string' ? rawAns.mcqSelectedId : undefined,
+        mcqMultiSelectedIds: Array.isArray(rawAns.mcqMultiSelectedIds)
+          ? rawAns.mcqMultiSelectedIds.map(String)
+          : undefined,
         tfAnswers: rawAns.tfAnswers && typeof rawAns.tfAnswers === 'object' ? { ...rawAns.tfAnswers } : undefined,
         shortText: typeof rawAns.shortText === 'string' ? rawAns.shortText.slice(0, 500) : undefined,
+        numberValue: typeof rawAns.numberValue === 'string' ? rawAns.numberValue.slice(0, 60) : undefined,
         fillBlankAnswers:
           rawAns.fillBlankAnswers && typeof rawAns.fillBlankAnswers === 'object'
             ? { ...rawAns.fillBlankAnswers }
@@ -761,6 +778,58 @@ export async function fetchWorksheetFromUrl(rawUrl: string): Promise<ParsedInter
   }
 }
 
+/**
+ * Checks whether a real online grading/submission backend endpoint has been configured via env.
+ * STRICT RULE: Never fabricates backend reception when no real backend URL is configured.
+ */
+export function getOnlineBackendConfig(): {
+  configured: boolean;
+  endpointUrl: string | null;
+} {
+  const envUrl =
+    typeof import.meta !== 'undefined' &&
+    (import.meta as unknown as { env?: Record<string, string | undefined> }).env
+      ?.VITE_INTERACTIVE_BACKEND_URL;
+  const trimmed = (envUrl || '').trim();
+  if (!trimmed) return { configured: false, endpointUrl: null };
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'https:' || parsed.hostname === 'localhost') {
+      return { configured: true, endpointUrl: parsed.toString().replace(/\/+$/, '') };
+    }
+  } catch {
+    // invalid url
+  }
+  return { configured: false, endpointUrl: null };
+}
+
+/**
+ * Builds a real, functional shareable link to open a hosted .pdfedu package directly inside PDF EDU STUDIO.
+ * Rejects non-HTTPS external URLs and refuses to generate fake links without an actual hosted URL.
+ */
+export function buildShareableWorksheetLink(
+  hostedPackageUrl: string,
+  assignmentCode: string
+): string {
+  const trimmed = hostedPackageUrl.trim();
+  if (!trimmed) {
+    throw new Error('Cần cung cấp đường dẫn HTTPS (hoặc cùng tên miền) trỏ tới tệp .pdfedu thật để tạo liên kết chia sẻ.');
+  }
+  const baseOrigin =
+    typeof window !== 'undefined' ? window.location.origin : 'https://localhost';
+  const basePath = typeof window !== 'undefined' ? window.location.pathname : '/';
+  const parsed = new URL(trimmed, baseOrigin);
+  if (parsed.protocol !== 'https:' && parsed.origin !== baseOrigin) {
+    throw new Error('Đường dẫn tệp bài tập phải dùng giao thức HTTPS an toàn hoặc cùng tên miền.');
+  }
+  const link = new URL(basePath, baseOrigin);
+  link.searchParams.set('worksheetUrl', parsed.toString());
+  if (assignmentCode.trim()) {
+    link.searchParams.set('code', assignmentCode.trim());
+  }
+  return link.toString();
+}
+
 // ============================================================================
 // TRUSTED TEACHER AUTO-GRADING ENGINE (NEVER TRUSTS STUDENT-CLAIMED SCORES)
 // ============================================================================
@@ -814,7 +883,7 @@ export function gradeSingleQuestion(
     };
   }
 
-  // 1. MCQ
+  // 1. MCQ (Single Choice)
   if (question.type === 'mcq') {
     const correct =
       Boolean(key.mcqCorrectId) &&
@@ -827,33 +896,77 @@ export function gradeSingleQuestion(
       autoPoints: pts,
       earnedPoints: existingManual?.earnedPoints ?? pts,
       mode: 'auto',
+      markStatus: correct ? 'correct' : 'wrong',
       teacherNote: existingManual?.teacherNote,
     };
   }
 
-  // 2. True / False per item (THPT rule for 4 statements; proportional otherwise)
-  if (question.type === 'tf') {
-    const keyMap = key.tfCorrectMap || {};
-    const ids = Object.keys(keyMap);
-    const ansMap = answer?.tfAnswers || {};
-    let correctCount = 0;
-    for (const id of ids) {
-      if (ansMap[id] && ansMap[id] === keyMap[id]) correctCount++;
+  // 1b. MCQ Multiple Choice (Checkboxes — exact or partial scoring)
+  if (question.type === 'mcq_multi') {
+    const expected = new Set((key.mcqMultiCorrectIds || []).filter(Boolean));
+    const selected = new Set((answer?.mcqMultiSelectedIds || []).filter(Boolean));
+    let pts = 0;
+    if (expected.size > 0) {
+      let rightHits = 0;
+      let wrongHits = 0;
+      for (const s of selected) {
+        if (expected.has(s)) rightHits++;
+        else wrongHits++;
+      }
+      if (key.mcqMultiScoring === 'partial') {
+        const net = Math.max(0, rightHits - wrongHits);
+        pts = roundScore((maxPoints * net) / expected.size);
+      } else {
+        pts = rightHits === expected.size && wrongHits === 0 ? maxPoints : 0;
+      }
     }
-    let ratio = 0;
-    if (ids.length === 4) {
-      const thptRatios = [0, 0.1, 0.25, 0.5, 1];
-      ratio = thptRatios[correctCount] ?? 0;
-    } else if (ids.length > 0) {
-      ratio = correctCount / ids.length;
-    }
-    const pts = roundScore(maxPoints * ratio);
     return {
       questionId: question.id,
       maxPoints,
       autoPoints: pts,
       earnedPoints: existingManual?.earnedPoints ?? pts,
       mode: 'auto',
+      markStatus: pts === maxPoints ? 'correct' : pts > 0 ? 'partial' : 'wrong',
+      teacherNote: existingManual?.teacherNote,
+    };
+  }
+
+  // 2. True / False per item (Configurable rubric: THPT 4-item, Equal per item, or Custom item points)
+  if (question.type === 'tf') {
+    const keyMap = key.tfCorrectMap || {};
+    const ids = Object.keys(keyMap);
+    const ansMap = answer?.tfAnswers || {};
+    const scoringMode = key.tfScoringMode || (ids.length === 4 ? 'thpt_4' : 'equal');
+
+    let pts = 0;
+    if (scoringMode === 'custom' && key.tfItemPoints) {
+      for (const id of ids) {
+        if (ansMap[id] && ansMap[id] === keyMap[id]) {
+          pts += Number(key.tfItemPoints[id] || 0);
+        }
+      }
+      pts = roundScore(Math.min(maxPoints, pts));
+    } else {
+      let correctCount = 0;
+      for (const id of ids) {
+        if (ansMap[id] && ansMap[id] === keyMap[id]) correctCount++;
+      }
+      let ratio = 0;
+      if (scoringMode === 'thpt_4' && ids.length === 4) {
+        const thptRatios = [0, 0.1, 0.25, 0.5, 1];
+        ratio = thptRatios[correctCount] ?? 0;
+      } else if (ids.length > 0) {
+        ratio = correctCount / ids.length;
+      }
+      pts = roundScore(maxPoints * ratio);
+    }
+    return {
+      questionId: question.id,
+      maxPoints,
+      autoPoints: pts,
+      earnedPoints: existingManual?.earnedPoints ?? pts,
+      mode: 'auto',
+      markStatus: pts === maxPoints ? 'correct' : pts > 0 ? 'partial' : 'wrong',
       teacherNote: existingManual?.teacherNote,
     };
   }
@@ -870,6 +983,28 @@ export function gradeSingleQuestion(
       autoPoints: pts,
       earnedPoints: existingManual?.earnedPoints ?? pts,
       mode: 'auto',
+      markStatus: correct ? 'correct' : 'wrong',
+      teacherNote: existingManual?.teacherNote,
+    };
+  }
+
+  // 3b. Numeric Input (with configurable tolerance)
+  if (question.type === 'number') {
+    const raw = (answer?.numberValue || '').trim().replace(/,/g, '.');
+    const parsed = raw.length > 0 ? Number(raw) : Number.NaN;
+    const tol = typeof key.numberTolerance === 'number' ? Math.abs(key.numberTolerance) : 0.01;
+    const correct =
+      typeof key.numberTarget === 'number' &&
+      !Number.isNaN(parsed) &&
+      Math.abs(parsed - key.numberTarget) <= tol;
+    const pts = correct ? maxPoints : 0;
+    return {
+      questionId: question.id,
+      maxPoints,
+      autoPoints: pts,
+      earnedPoints: existingManual?.earnedPoints ?? pts,
+      mode: 'auto',
+      markStatus: correct ? 'correct' : 'wrong',
       teacherNote: existingManual?.teacherNote,
     };
   }
@@ -892,11 +1027,12 @@ export function gradeSingleQuestion(
       autoPoints: pts,
       earnedPoints: existingManual?.earnedPoints ?? pts,
       mode: 'auto',
+      markStatus: pts === maxPoints ? 'correct' : pts > 0 ? 'partial' : 'wrong',
       teacherNote: existingManual?.teacherNote,
     };
   }
 
-  // 5. Matching (STRICTLY BY STABLE ITEM IDs — works identically for Line-Connecting and Drag-Drop)
+  // 5. Matching (STRICTLY BY STABLE ITEM IDs — supports custom per-pair points & teacher overrides)
   if (question.type === 'matching') {
     const expected = key.matchingCorrectPairs || [];
     const expectedSet = new Set(expected.map((p) => `${p.fromId}->${p.toId}`));
@@ -911,7 +1047,19 @@ export function gradeSingleQuestion(
       }
     }
     const defaultPerPair = expected.length > 0 ? maxPoints / expected.length : 0;
-    let pts = expected.length > 0 ? roundScore((maxPoints * matched) / expected.length) : 0;
+    let pts = 0;
+    if (key.matchingPairPoints && Object.keys(key.matchingPairPoints).length > 0) {
+      for (const exp of expected) {
+        const pairKey = `${exp.fromId}->${exp.toId}`;
+        if (seen.has(pairKey)) {
+          pts += Number(key.matchingPairPoints[pairKey] ?? defaultPerPair);
+        }
+      }
+      pts = roundScore(Math.min(maxPoints, pts));
+    } else {
+      pts = expected.length > 0 ? roundScore((maxPoints * matched) / expected.length) : 0;
+    }
+
     if (existingManual?.pairOverrides && Object.keys(existingManual.pairOverrides).length > 0) {
       let sum = 0;
       for (const exp of expected) {
@@ -919,7 +1067,7 @@ export function gradeSingleQuestion(
         if (typeof existingManual.pairOverrides[pairKey] === 'number') {
           sum += existingManual.pairOverrides[pairKey];
         } else if (seen.has(pairKey)) {
-          sum += defaultPerPair;
+          sum += Number(key.matchingPairPoints?.[pairKey] ?? defaultPerPair);
         }
       }
       pts = roundScore(Math.min(maxPoints, Math.max(0, sum)));
@@ -930,6 +1078,7 @@ export function gradeSingleQuestion(
       autoPoints: pts,
       earnedPoints: existingManual?.earnedPoints ?? pts,
       mode: 'auto',
+      markStatus: pts === maxPoints ? 'correct' : pts > 0 ? 'partial' : 'wrong',
       matchedPairsCount: matched,
       totalExpectedPairs: expected.length,
       pairOverrides: existingManual?.pairOverrides,
@@ -1193,6 +1342,14 @@ export async function renderInteractiveAnswersToPdf(params: {
         ? `HS chọn: ${selected.label}. ${selected.text}`
         : 'HS chưa chọn đáp án.';
       drawSafeLine(page, fonts.sansBold, txt.slice(0, 72), rx + 8, bodyTop - 6, 9, rgb(0.03, 0.45, 0.39));
+    } else if (q.type === 'mcq_multi') {
+      const selIds = new Set(ans?.mcqMultiSelectedIds || []);
+      const chosen = (q.mcqOptions || [])
+        .filter((o) => selIds.has(o.id))
+        .map((o) => `${o.label}. ${o.text}`)
+        .join(' | ');
+      const txt = chosen ? `HS chọn nhiều đáp án: ${chosen}` : 'HS chưa chọn phương án nào.';
+      drawSafeLine(page, fonts.sansBold, txt.slice(0, 76), rx + 8, bodyTop - 6, 8.8, rgb(0.03, 0.45, 0.39));
     } else if (q.type === 'tf') {
       let curY = bodyTop - 2;
       for (const st of q.tfStatements || []) {
@@ -1212,6 +1369,9 @@ export async function renderInteractiveAnswersToPdf(params: {
       }
     } else if (q.type === 'short') {
       const txt = `Trả lời: ${ans?.shortText || '(Chưa nhập)'}${q.shortUnit ? ` ${q.shortUnit}` : ''}`;
+      drawSafeLine(page, fonts.sansBold, txt.slice(0, 74), rx + 8, bodyTop - 6, 9.2, rgb(0.03, 0.45, 0.39));
+    } else if (q.type === 'number') {
+      const txt = `Giá trị số: ${ans?.numberValue || '(Chưa nhập)'}${q.numberUnit ? ` ${q.numberUnit}` : ''}`;
       drawSafeLine(page, fonts.sansBold, txt.slice(0, 74), rx + 8, bodyTop - 6, 9.2, rgb(0.03, 0.45, 0.39));
     } else if (q.type === 'fill_blank') {
       let curY = bodyTop - 2;

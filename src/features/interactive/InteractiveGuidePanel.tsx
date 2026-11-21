@@ -7,6 +7,8 @@ import {
   GraduationCap,
   HardDrive,
   Link2,
+  ScanSearch,
+  Send,
   ShieldCheck,
   UserCheck,
 } from 'lucide-react';
@@ -22,10 +24,10 @@ export const InteractiveGuidePanel: React.FC = () => {
             <div>
               <h2 className="text-[21px] font-bold text-[#164E63] flex items-center gap-2">
                 <BookOpen className="w-6 h-6 text-[#087F70]" />
-                <span>Hướng dẫn sử dụng Bài tập PDF tương tác</span>
+                <span>Hướng dẫn quy trình Bài tập PDF tương tác (6 khu vực)</span>
               </h2>
               <p className="text-[15.5px] text-slate-600 mt-1">
-                Tra cứu nhanh quy trình tạo bài, làm bài online/offline, lưu bài về máy, nộp tệp .pdfedu và chấm bài trả kết quả.
+                Tải PDF → Chọn trang → Nhận diện câu hỏi → Giáo viên duyệt → Giao bài Online/Offline → Học sinh làm & nộp → Thu bài, chấm và trả kết quả.
               </p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -39,7 +41,7 @@ export const InteractiveGuidePanel: React.FC = () => {
                 }`}
               >
                 <GraduationCap className="w-4 h-4" />
-                <span>Dành cho Giáo viên</span>
+                <span>Quy trình Giáo viên</span>
               </button>
               <button
                 type="button"
@@ -51,7 +53,7 @@ export const InteractiveGuidePanel: React.FC = () => {
                 }`}
               >
                 <UserCheck className="w-4 h-4" />
-                <span>Dành cho Học sinh</span>
+                <span>Quy trình Học sinh</span>
               </button>
             </div>
           </div>
@@ -64,34 +66,31 @@ export const InteractiveGuidePanel: React.FC = () => {
                 <span className="w-7 h-7 rounded-full bg-[#164E63] text-white text-[14px] flex items-center justify-center shrink-0">
                   1
                 </span>
-                <span>Tạo bài tập từ PDF có sẵn hoặc mẫu 8 môn học THPT</span>
+                <span>Tải PDF, chọn trang bài học & phân biệt Trang PDF với Trang in</span>
               </h3>
               <p className="text-[15.5px] text-slate-700 leading-relaxed">
-                Tại mục <strong>Tạo bài tập</strong>, thầy/cô tải tệp <strong>.pdf</strong> từ máy tính, chọn nhanh tài liệu đang mở trong PDF EDU STUDIO, hoặc mở 1 trong 8 phiếu mẫu chuẩn THPT (Toán, Vật lí, Hóa học, Sinh học, Tin học, Địa lí, Lịch sử, Tiếng Anh). Chọn loại câu hỏi ở cột trái rồi nhấp vào vị trí cần đặt trên trang PDF; kéo thanh tiêu đề để di chuyển hoặc góc dưới phải để đổi kích thước.
+                Tại mục <strong>Tạo bài tập</strong>, tải tệp PDF nhiều trang từ máy tính (ví dụ vở bài tập 57 trang). Nhập phạm vi trang cần trích (1 trang như <code>2</code>, khoảng trang <code>2-3</code>, trang không liên tiếp <code>2, 3, 7-9</code>, hoặc toàn bộ). Hệ thống hiển thị tách biệt <strong>Trang PDF</strong> và <strong>Trang in trên tài liệu</strong> để tránh nhầm trang khi đặt vùng trả lời.
               </p>
             </div>
 
             <div className="rounded-xl bg-white border border-slate-200 p-5 space-y-2.5">
               <h3 className="text-[17px] font-bold text-[#164E63] flex items-center gap-2">
-                <span className="w-7 h-7 rounded-full bg-[#164E63] text-white text-[14px] flex items-center justify-center shrink-0">
-                  2
-                </span>
-                <span>Tạo bài ghép đôi bằng vẽ đường nối hoặc kéo thả</span>
+                <ScanSearch className="w-5 h-5 text-[#087F70] shrink-0" />
+                <span>Bước 2: Nhấn "Nhận diện bài tập" và Giáo viên duyệt vùng</span>
               </h3>
               <p className="text-[15.5px] text-slate-700 leading-relaxed">
-                Chọn dạng <strong>Ghép đôi</strong>, tại bảng thuộc tính bên phải có thể chuyển qua lại giữa <strong>Vẽ đường nối</strong> (mặc định, học sinh kéo nối trực tiếp giữa cột A – cột B bằng nét vector SVG) và <strong>Kéo thả ghép đôi</strong>. Thiết lập đáp án đúng theo từng cặp mục ổn định. Nếu ở chế độ kiểm tra (<strong>Kiểm tra</strong>), tính năng báo đúng/sai tức thì luôn tắt.
+                Hệ thống đọc lớp văn bản PDF.js để đề xuất vùng trả lời cho 14 dạng câu hỏi (trắc nghiệm 1/nhiều đáp án, Đúng/Sai, ghép đôi vẽ đường nối/kéo thả, điền khuyết, nhập số, công thức MathLive, tự luận, vẽ hình...). Những vùng chưa chắc chắn được gắn nhãn <strong>Cần GV kiểm tra</strong>. Thầy/cô chọn từng câu ở cột trái (tự cuộn đến đúng vị trí trên PDF), kéo/đổi cỡ vùng, đổi loại câu hỏi nếu cần, nhập đáp án chuẩn + thang điểm và nhấn <strong>Xác nhận duyệt</strong>.
               </p>
             </div>
 
             <div className="rounded-xl bg-white border border-slate-200 p-5 space-y-2.5">
               <h3 className="text-[17px] font-bold text-[#164E63] flex items-center gap-2">
-                <span className="w-7 h-7 rounded-full bg-[#164E63] text-white text-[14px] flex items-center justify-center shrink-0">
-                  3
-                </span>
-                <span>Xuất gói bài tập .pdfedu giao cho học sinh (an toàn, không lộ đáp án)</span>
+                <Send className="w-5 h-5 text-[#087F70] shrink-0" />
+                <span>Bước 3: Giao bài Offline hoặc tạo liên kết Online tại mục "Giao bài"</span>
               </h3>
               <p className="text-[15.5px] text-slate-700 leading-relaxed">
-                Nhấn <strong>Lưu bản gốc GV</strong> để lưu đề kèm đáp án vào bộ nhớ cục bộ của giáo viên, sau đó nhấn <strong>Xuất bài tập HS (.pdfedu)</strong> để gửi qua Zalo, Email, LMS hoặc USB. Hệ thống tự động loại bỏ hoàn toàn đáp án giáo viên khỏi tệp giao học sinh và đính kèm mã kiểm tra toàn vẹn SHA-256.
+                <strong>Offline:</strong> Xuất tệp <code>.pdfedu</code> (đã loại bỏ hoàn toàn đáp án giáo viên) gửi qua Zalo, Email, LMS hoặc USB.{' '}
+                <strong>Online:</strong> Khi đặt tệp <code>.pdfedu</code> lên đường dẫn HTTPS hợp lệ, dán URL vào mục <strong>Giao bài → Online</strong> để sinh liên kết thật và mã bài cho học sinh mở trực tiếp. Danh sách <strong>Quản lý bài đã giao</strong> lưu lại lịch giao, hạn nộp và thống kê số bài nộp thật đã nhận.
               </p>
             </div>
 
@@ -100,10 +99,10 @@ export const InteractiveGuidePanel: React.FC = () => {
                 <span className="w-7 h-7 rounded-full bg-[#164E63] text-white text-[14px] flex items-center justify-center shrink-0">
                   4
                 </span>
-                <span>Nhận bài, chấm tự động khách quan + chấm tay tự luận, xuất PDF & Excel</span>
+                <span>Thu bài, chấm tự động + chấm thủ công, xuất PDF trả bài & Excel</span>
               </h3>
               <p className="text-[15.5px] text-slate-700 leading-relaxed">
-                Chuyển sang mục <strong>Nhận và chấm bài</strong>, chọn đúng đề gốc của giáo viên rồi nhập cùng lúc nhiều tệp bài nộp <strong>.pdfedu</strong> của học sinh. Các câu trắc nghiệm, Đúng/Sai, trả lời ngắn, điền khuyết, ghép đôi và sắp xếp được chấm tự động theo đáp án gốc của giáo viên (không tin điểm tự khai từ tệp học sinh). Các câu tự luận, vẽ hình, công thức khoa học, chú thích sơ đồ và tệp đính kèm được giáo viên xem trực tiếp trên trang PDF để cho điểm và ghi nhận xét. Sau cùng nhấn <strong>Xuất PDF trả bài</strong> và <strong>Xuất bảng điểm Excel (.xlsx)</strong>.
+                Tại mục <strong>Thu bài & Chấm bài</strong>, nhập cùng lúc nhiều tệp bài nộp <code>.pdfedu</code> của học sinh. Hệ thống kiểm tra tính toàn vẹn, phát hiện trùng lặp, không tự ghi đè bài đã chấm và chỉ chấm tự động theo đáp án gốc giáo viên (tự luận, vẽ hình, công thức phức tạp, tệp đính kèm do giáo viên chấm thủ công). Sau đó xuất <strong>PDF trả bài</strong> (hiển thị cả đường nối, thẻ kéo thả, điểm & nhận xét) và <strong>bảng điểm Excel (.xlsx)</strong>.
               </p>
             </div>
           </div>
@@ -112,59 +111,58 @@ export const InteractiveGuidePanel: React.FC = () => {
             <div className="rounded-xl bg-white border border-slate-200 p-5 space-y-2.5">
               <h3 className="text-[17px] font-bold text-[#087F70] flex items-center gap-2">
                 <FolderOpen className="w-5 h-5 shrink-0" />
-                <span>Bước 1: Mở bài tập PDF tương tác (Online hoặc Offline)</span>
+                <span>Bước 1: Mở bài tập từ tệp Offline (.pdfedu) hoặc liên kết Online</span>
               </h3>
               <p className="text-[15.5px] text-slate-700 leading-relaxed">
-                Tại mục <strong>Làm bài</strong>, em nhấn <strong>Mở tệp bài tập (.pdfedu)</strong> từ máy tính, hoặc dán đường dẫn bài tập trực tuyến (HTTPS) do giáo viên cung cấp. Nếu muốn thử ngay, em có thể chọn 1 trong 8 phiếu mẫu THPT có sẵn. Sau khi mở, bài tập chạy hoàn toàn trên máy kể cả khi mất mạng.
+                Em mở tệp <code>.pdfedu</code> giáo viên gửi tại mục <strong>Làm bài</strong>, hoặc nhấn trực tiếp vào liên kết bài tập giáo viên chia sẻ. Sau khi tải về, em vẫn có thể tiếp tục làm bài ngay cả khi mất kết nối mạng.
               </p>
             </div>
 
             <div className="rounded-xl bg-white border border-slate-200 p-5 space-y-2.5">
               <h3 className="text-[17px] font-bold text-[#087F70] flex items-center gap-2">
                 <Link2 className="w-5 h-5 shrink-0" />
-                <span>Bước 2: Làm bài trực tiếp — kể cả bài ghép đôi vẽ đường nối & kéo thả</span>
+                <span>Bước 2: Làm bài trực tiếp trên trang PDF (14 dạng tương tác)</span>
               </h3>
               <p className="text-[15.5px] text-slate-700 leading-relaxed">
-                Nhập <strong>Họ và tên</strong>, <strong>Lớp</strong> ở thanh phía trên. Với câu <strong>Vẽ đường nối</strong>, kéo từ chấm tròn ở cột A sang cột B (hoặc chạm mục A rồi chạm mục B); nhấp vào đường nối để gỡ nếu muốn nối lại. Với câu <strong>Kéo thả</strong>, kéo thẻ từ kho bên phải vào ô đích (hoặc chạm thẻ rồi chạm ô đích).
+                Nhập <strong>Họ và tên</strong>, <strong>Lớp</strong> ở thanh phía trên. Em có thể chọn 1 hoặc nhiều đáp án, đánh dấu Đúng/Sai, nhập số, gõ công thức bằng MathLive, vẽ tay, chú thích sơ đồ, nối cặp bằng đường nối SVG (kéo hoặc chạm A → B) hoặc kéo thả thẻ vào ô đích.
               </p>
             </div>
 
             <div className="rounded-xl bg-white border border-slate-200 p-5 space-y-2.5">
               <h3 className="text-[17px] font-bold text-[#087F70] flex items-center gap-2">
                 <HardDrive className="w-5 h-5 shrink-0" />
-                <span>Bước 3: Lưu bài làm dở và mở lại bất cứ lúc nào</span>
+                <span>Bước 3: Lưu bài vào thiết bị và mở lại từ "Bài đã lưu"</span>
               </h3>
               <p className="text-[15.5px] text-slate-700 leading-relaxed">
-                Bài làm được tự động lưu định kỳ vào bộ nhớ trình duyệt (IndexedDB) và em có thể nhấn <strong>Lưu bài</strong> bất cứ lúc nào. Khi đóng trình duyệt và mở lại sau, vào mục <strong>Bài đã lưu</strong> để mở lại bài đang làm dở — mọi lựa chọn, đường nối, thẻ kéo thả, nét vẽ và công thức đều được khôi phục nguyên vẹn.
+                Hệ thống tự động lưu vào IndexedDB và cho phép nhấn <strong>Lưu bài</strong> bất cứ lúc nào. Khi đóng và mở lại trình duyệt, vào mục <strong>Bài đã lưu</strong> để làm tiếp mà không mất đường nối, vị trí kéo thả, công thức hay nét vẽ.
               </p>
             </div>
 
             <div className="rounded-xl bg-white border border-slate-200 p-5 space-y-2.5">
               <h3 className="text-[17px] font-bold text-[#087F70] flex items-center gap-2">
                 <FileDown className="w-5 h-5 shrink-0" />
-                <span>Bước 4: Xuất tệp bài làm để nộp cho giáo viên</span>
+                <span>Bước 4: Hoàn thành và xuất bài nộp cho giáo viên</span>
               </h3>
               <p className="text-[15.5px] text-slate-700 leading-relaxed">
-                Khi làm xong, nhấn <strong>Xuất bài nộp (.pdfedu)</strong> để lưu tệp bài làm chuẩn gửi lại giáo viên chấm điểm. Em cũng có thể nhấn <strong>Xuất PDF bài làm</strong> để lưu bản PDF có hiển thị đầy đủ câu trả lời, đường nối và thẻ đã ghép để lưu trữ hoặc in ra giấy.
+                Nhấn <strong>Xuất bài nộp (.pdfedu)</strong> để tạo tệp nộp chuẩn gửi cho giáo viên chấm điểm, và có thể xuất thêm <strong>PDF bài làm</strong> để lưu trữ hoặc in ra giấy.
               </p>
             </div>
           </div>
         )}
 
-        {/* Honest Security & Offline Capability Note */}
         <div className="rounded-xl bg-[#E6F1EF] border border-teal-200 p-5 flex items-start gap-3">
           <ShieldCheck className="w-6 h-6 text-[#087F70] shrink-0 mt-0.5" />
           <div className="space-y-1 text-[15px] text-[#164E63]">
-            <div className="font-bold">Lưu ý kỹ thuật về dữ liệu cục bộ & nộp bài</div>
+            <div className="font-bold">Cam kết minh bạch về Offline, Online & An toàn dữ liệu</div>
             <p className="leading-relaxed">
-              Mọi thao tác tạo bài, làm bài, lưu nháp và chấm bài đều thực hiện 100% cục bộ trên trình duyệt, không thu thập dữ liệu học sinh lên máy chủ trung gian. Vì hệ thống không sử dụng máy chủ lưu trữ đám mây, học sinh hãy xuất tệp <strong>.pdfedu</strong> để nộp cho giáo viên qua kênh lớp học (LMS, Email, Zalo, USB) và lưu bản dự phòng khi làm bài dài.
+              Quy trình Offline xử lý 100% cục bộ không cần đăng nhập hay API trả phí, không lưu đáp án giáo viên trong tệp giao học sinh và không tin điểm tự khai trong bài nộp. Khi chưa kết nối máy chủ thu bài riêng, ứng dụng không giả lập nút nộp trực tuyến mà hướng dẫn học sinh xuất tệp <strong>.pdfedu</strong> gửi qua kênh lớp học.
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2 text-[14.5px] text-slate-500 pb-6">
           <CheckCircle2 className="w-4 h-4 text-[#087F70] shrink-0" />
-          <span>Hỗ trợ đầy đủ 12 dạng câu hỏi tương tác · Tọa độ khóa theo trang PDF, không lệch khi phóng to/thu nhỏ.</span>
+          <span>Hỗ trợ 14 dạng câu hỏi · Tự nhận diện PDF.js có giáo viên duyệt · Tọa độ chuẩn hóa theo trang PDF.</span>
         </div>
       </div>
     </div>

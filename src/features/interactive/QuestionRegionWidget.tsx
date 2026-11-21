@@ -1,12 +1,17 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { MathfieldElement } from 'mathlive';
 import {
+  AlertCircle,
   ArrowDown,
   ArrowUp,
+  CheckCircle2,
+  CheckSquare,
   Download,
   Eraser,
   GripVertical,
   Paperclip,
   PenTool,
+  Square,
   Trash2,
   Undo2,
 } from 'lucide-react';
@@ -26,6 +31,12 @@ import {
   type StudentQuestionAnswer,
   type TeacherQuestionKey,
 } from '../../types/interactive';
+
+// Ensure MathLive uses local bundled fonts (100% offline, zero external CDN requests)
+if (typeof window !== 'undefined' && typeof MathfieldElement !== 'undefined') {
+  MathfieldElement.fontsDirectory = '/mathlive/fonts';
+  MathfieldElement.soundsDirectory = null;
+}
 
 interface QuestionRegionWidgetProps {
   question: InteractiveQuestion;
@@ -52,6 +63,70 @@ const FORMULA_QUICK_SNIPPETS = [
   { label: 'Vector', latex: '\\vec{F}' },
   { label: 'Mũi tên', latex: '\\rightarrow' },
 ];
+
+const MathLiveFieldInput: React.FC<{
+  value: string;
+  readOnly: boolean;
+  placeholder?: string;
+  onChange: (latex: string) => void;
+}> = ({ value, readOnly, placeholder, onChange }) => {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const mfRef = useRef<MathfieldElement | null>(null);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || typeof window === 'undefined') return;
+    let mf: MathfieldElement | null = null;
+    try {
+      mf = new MathfieldElement();
+      mf.value = value || '';
+      mf.readOnly = readOnly;
+      mf.style.width = '100%';
+      mf.style.minHeight = '38px';
+      mf.style.fontSize = '16px';
+      mf.style.padding = '4px 8px';
+      mf.style.borderRadius = '8px';
+      mf.style.border = '1px solid #CBD5E1';
+      mf.style.backgroundColor = '#FFFFFF';
+      const handleInput = () => {
+        if (mf) onChange(mf.value);
+      };
+      mf.addEventListener('input', handleInput);
+      host.innerHTML = '';
+      host.appendChild(mf);
+      mfRef.current = mf;
+      return () => {
+        mf?.removeEventListener('input', handleInput);
+        if (host.contains(mf!)) host.removeChild(mf!);
+        mfRef.current = null;
+      };
+    } catch {
+      return undefined;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readOnly]);
+
+  useEffect(() => {
+    const mf = mfRef.current;
+    if (mf && mf.value !== value) {
+      mf.value = value || '';
+    }
+  }, [value]);
+
+  return (
+    <div className="space-y-1">
+      <div ref={hostRef} aria-label={placeholder || 'Nhập công thức MathLive'} />
+      <input
+        type="text"
+        readOnly={readOnly}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder || 'Hoặc nhập LaTeX trực tiếp (ví dụ: \\frac{-b}{2a})'}
+        className="w-full rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 font-mono text-[12.5px] text-slate-700 focus:border-[#087F70] outline-none"
+      />
+    </div>
+  );
+};
 
 export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
   question,
@@ -87,22 +162,45 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
     });
   };
 
-  // ---- AUTHOR MODE: DRAG & RESIZE IN PDF-POINT COORDINATES ----
+  // Resolve exact PDF-point coordinates from normalized ratios if available (screen/zoom invariant!)
+  const resolvedX =
+    typeof question.region.nx === 'number'
+      ? question.region.nx * pageWidth
+      : question.region.x;
+  const resolvedY =
+    typeof question.region.ny === 'number'
+      ? question.region.ny * pageHeight
+      : question.region.y;
+  const resolvedW =
+    typeof question.region.nw === 'number'
+      ? question.region.nw * pageWidth
+      : question.region.width;
+  const resolvedH =
+    typeof question.region.nh === 'number'
+      ? question.region.nh * pageHeight
+      : question.region.height;
+
+  // ---- AUTHOR MODE: DRAG & RESIZE IN NORMALIZED + PDF-POINT COORDINATES ----
   const startMove = (e: React.PointerEvent) => {
     if (mode !== 'author' || !onUpdateRegion) return;
     e.stopPropagation();
     onSelect?.();
     const startClientX = e.clientX;
     const startClientY = e.clientY;
-    const origX = question.region.x;
-    const origY = question.region.y;
+    const origX = resolvedX;
+    const origY = resolvedY;
 
     const handleMove = (ev: PointerEvent) => {
       const dx = (ev.clientX - startClientX) / zoom;
       const dy = (ev.clientY - startClientY) / zoom;
-      const nx = Math.max(8, Math.min(pageWidth - question.region.width - 8, Math.round(origX + dx)));
-      const ny = Math.max(8, Math.min(pageHeight - question.region.height - 8, Math.round(origY + dy)));
-      onUpdateRegion({ x: nx, y: ny });
+      const nxPt = Math.max(8, Math.min(pageWidth - resolvedW - 8, Math.round(origX + dx)));
+      const nyPt = Math.max(8, Math.min(pageHeight - resolvedH - 8, Math.round(origY + dy)));
+      onUpdateRegion({
+        x: nxPt,
+        y: nyPt,
+        nx: Number((nxPt / pageWidth).toFixed(4)),
+        ny: Number((nyPt / pageHeight).toFixed(4)),
+      });
     };
     const handleUp = () => {
       window.removeEventListener('pointermove', handleMove);
@@ -118,15 +216,20 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
     onSelect?.();
     const startClientX = e.clientX;
     const startClientY = e.clientY;
-    const origW = question.region.width;
-    const origH = question.region.height;
+    const origW = resolvedW;
+    const origH = resolvedH;
 
     const handleMove = (ev: PointerEvent) => {
       const dw = (ev.clientX - startClientX) / zoom;
       const dh = (ev.clientY - startClientY) / zoom;
-      const nw = Math.max(160, Math.min(pageWidth - question.region.x - 8, Math.round(origW + dw)));
-      const nh = Math.max(64, Math.min(pageHeight - question.region.y - 8, Math.round(origH + dh)));
-      onUpdateRegion({ width: nw, height: nh });
+      const nwPt = Math.max(160, Math.min(pageWidth - resolvedX - 8, Math.round(origW + dw)));
+      const nhPt = Math.max(64, Math.min(pageHeight - resolvedY - 8, Math.round(origH + dh)));
+      onUpdateRegion({
+        width: nwPt,
+        height: nhPt,
+        nw: Number((nwPt / pageWidth).toFixed(4)),
+        nh: Number((nhPt / pageHeight).toFixed(4)),
+      });
     };
     const handleUp = () => {
       window.removeEventListener('pointermove', handleMove);
@@ -249,29 +352,29 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
     patchAnswer({ orderingIds: next });
   };
 
-  // Keep inner content unscaled in logical PDF points and scale smoothly with CSS transform
-  // OR render directly at zoomed size so text stays super crisp!
-  // Rendering the box at exact PDF-point * zoom gives crystal-clear typography at every zoom level.
   const boxStyle: React.CSSProperties = {
-    left: `${question.region.x * zoom}px`,
-    top: `${question.region.y * zoom}px`,
-    width: `${question.region.width * zoom}px`,
-    minHeight: `${question.region.height * zoom}px`,
+    left: `${resolvedX * zoom}px`,
+    top: `${resolvedY * zoom}px`,
+    width: `${resolvedW * zoom}px`,
+    minHeight: `${resolvedH * zoom}px`,
   };
 
   const borderClass =
     mode === 'author'
       ? selected
-        ? 'border-2 border-[#087F70] ring-2 ring-[#087F70]/25 bg-white/96 shadow-md z-30'
-        : 'border border-dashed border-[#164E63]/70 bg-white/92 hover:border-[#087F70] z-20'
+        ? 'border-2 border-[#087F70] ring-2 ring-[#087F70]/25 bg-white/95 shadow-md z-30'
+        : question.needsReview && !question.teacherApproved
+          ? 'border-2 border-dashed border-amber-500 bg-amber-50/40 hover:border-[#087F70] z-20'
+          : 'border border-dashed border-[#164E63]/70 bg-white/92 hover:border-[#087F70] z-20'
       : mode === 'grade'
         ? selected
           ? 'border-2 border-[#DC2626] ring-2 ring-red-200 bg-white/97 shadow-md z-30'
           : 'border border-red-300 bg-white/94 z-20'
-        : 'border border-[#087F70]/60 bg-white/96 shadow-xs z-20 focus-within:border-[#087F70] focus-within:ring-2 focus-within:ring-[#087F70]/20';
+        : 'border border-[#087F70]/60 bg-white/95 shadow-xs z-20 focus-within:border-[#087F70] focus-within:ring-2 focus-within:ring-[#087F70]/20';
 
   return (
     <div
+      data-question-id={question.id}
       style={boxStyle}
       onClick={(e) => {
         if (mode === 'author' || mode === 'grade') {
@@ -286,7 +389,9 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
         onPointerDown={mode === 'author' ? startMove : undefined}
         className={`px-2.5 py-1 flex items-center justify-between gap-2 text-[13px] font-semibold border-b ${
           mode === 'author'
-            ? 'bg-[#E6F1EF] text-[#164E63] border-teal-200 cursor-move select-none'
+            ? question.needsReview && !question.teacherApproved
+              ? 'bg-amber-100/90 text-amber-950 border-amber-300 cursor-move select-none'
+              : 'bg-[#E6F1EF] text-[#164E63] border-teal-200 cursor-move select-none'
             : mode === 'grade'
               ? 'bg-red-50 text-[#991B1B] border-red-200 cursor-pointer'
               : 'bg-[#F4F8F7] text-[#164E63] border-slate-200'
@@ -297,6 +402,18 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
           <span className="truncate">
             {question.code} · {QUESTION_TYPE_META[question.type].shortLabel}
           </span>
+          {mode === 'author' && question.needsReview && !question.teacherApproved && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-amber-600 text-white text-[11px] font-bold shrink-0">
+              <AlertCircle className="w-3 h-3" />
+              <span>Cần GV kiểm tra</span>
+            </span>
+          )}
+          {mode === 'author' && question.teacherApproved && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-emerald-600 text-white text-[11px] font-bold shrink-0">
+              <CheckCircle2 className="w-3 h-3" />
+              <span>Đã duyệt</span>
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           {mode === 'grade' && gradingDetail ? (
@@ -327,9 +444,9 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
         </div>
       </div>
 
-      {/* Question Body (12 Distinct Interactive Types) */}
+      {/* Question Body (All 14 Distinct Interactive Types) */}
       <div className="p-2.5 flex-1 overflow-y-auto text-[14px] text-slate-800 space-y-2">
-        {/* 1. MCQ */}
+        {/* 1. MCQ Single Choice */}
         {question.type === 'mcq' && (
           <div className="grid grid-cols-2 gap-1.5">
             {(question.mcqOptions || []).map((opt) => {
@@ -359,7 +476,49 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
           </div>
         )}
 
-        {/* 2. True / False per item */}
+        {/* 2. MCQ Multiple Choice (Checkboxes) */}
+        {question.type === 'mcq_multi' && (
+          <div className="grid grid-cols-2 gap-1.5">
+            {(question.mcqOptions || []).map((opt) => {
+              const cur = answer?.mcqMultiSelectedIds || [];
+              const checked = cur.includes(opt.id);
+              const isKey =
+                mode === 'grade' && (teacherKey?.mcqMultiCorrectIds || []).includes(opt.id);
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  disabled={readOnly}
+                  onClick={() => {
+                    const next = checked
+                      ? cur.filter((id) => id !== opt.id)
+                      : [...cur, opt.id];
+                    patchAnswer({ mcqMultiSelectedIds: next });
+                  }}
+                  className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left text-[14px] transition-colors ${
+                    readOnly ? 'cursor-default' : 'cursor-pointer'
+                  } ${
+                    isKey
+                      ? 'bg-emerald-50 border-emerald-500 text-emerald-950 font-semibold'
+                      : checked
+                        ? 'bg-[#087F70] border-[#087F70] text-white font-semibold'
+                        : 'bg-white border-slate-300 hover:border-[#087F70]'
+                  }`}
+                >
+                  {checked ? (
+                    <CheckSquare className="w-4 h-4 shrink-0" />
+                  ) : (
+                    <Square className="w-4 h-4 shrink-0 opacity-60" />
+                  )}
+                  <span className="font-bold shrink-0">{opt.label}.</span>
+                  <span className="truncate">{opt.text}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* 3. True / False per item */}
         {question.type === 'tf' && (
           <div className="space-y-1.5">
             {(question.tfStatements || []).map((st) => {
@@ -408,7 +567,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
           </div>
         )}
 
-        {/* 3. Short Answer */}
+        {/* 4. Short Answer */}
         {question.type === 'short' && (
           <div className="flex items-center gap-2">
             <input
@@ -427,7 +586,32 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
           </div>
         )}
 
-        {/* 4. Fill in the Blank */}
+        {/* 5. Numeric Input */}
+        {question.type === 'number' && (
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              inputMode="decimal"
+              readOnly={readOnly}
+              value={answer?.numberValue || ''}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (/^-?\d*[.,]?\d*$/.test(v)) {
+                  patchAnswer({ numberValue: v });
+                }
+              }}
+              placeholder={question.numberPlaceholder || 'Nhập giá trị số (VD: 12.5)'}
+              className="w-44 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-mono text-[15px] font-semibold text-[#164E63] focus:border-[#087F70] outline-none"
+            />
+            {question.numberUnit && (
+              <span className="text-[14.5px] font-semibold text-[#164E63]">
+                {question.numberUnit}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* 6. Fill in the Blank */}
         {question.type === 'fill_blank' && (
           <div className="space-y-1.5">
             {(question.fillBlanks || []).map((slot) => (
@@ -454,7 +638,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
           </div>
         )}
 
-        {/* 5. Essay */}
+        {/* 7. Essay */}
         {question.type === 'essay' && (
           <textarea
             readOnly={readOnly}
@@ -466,7 +650,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
           />
         )}
 
-        {/* 6. Matching (Line-Connecting OR Drag-and-Drop) */}
+        {/* 8. Matching (Line-Connecting OR Drag-and-Drop) */}
         {question.type === 'matching' && question.matching && (
           <MatchingWidget
             questionId={question.id}
@@ -479,7 +663,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
           />
         )}
 
-        {/* 7. Ordering */}
+        {/* 9. Ordering */}
         {question.type === 'ordering' && (
           <div className="space-y-1.5">
             {currentOrderIds.map((id, idx) => {
@@ -524,7 +708,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
           </div>
         )}
 
-        {/* 8. Reading Comprehension */}
+        {/* 10. Reading Comprehension */}
         {question.type === 'reading' && (
           <div className="space-y-2">
             {question.readingPassage && (
@@ -586,7 +770,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
           </div>
         )}
 
-        {/* 9. Scientific Formula (LaTeX + Live SVG Vector Preview) */}
+        {/* 11. Scientific Formula (MathLive visual editor + LaTeX + SVG Preview) */}
         {question.type === 'formula' && (
           <div className="space-y-1.5">
             {!readOnly && (
@@ -607,30 +791,24 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                 ))}
               </div>
             )}
-            <input
-              type="text"
-              readOnly={readOnly}
+            <MathLiveFieldInput
               value={answer?.formulaLatex || ''}
-              onChange={(e) => patchAnswer({ formulaLatex: e.target.value })}
-              placeholder={question.formulaPlaceholder || 'Nhập công thức LaTeX (ví dụ: \\frac{-b}{2a})'}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 font-mono text-[13.5px] text-slate-900 focus:border-[#087F70] outline-none"
+              readOnly={readOnly}
+              placeholder={question.formulaPlaceholder}
+              onChange={(latex) => patchAnswer({ formulaLatex: latex })}
             />
-            <div className="min-h-[38px] rounded-lg border border-slate-200 bg-[#F8FBFA] px-3 py-1.5 flex items-center">
-              {formulaPreviewSvg ? (
+            {formulaPreviewSvg && (
+              <div className="min-h-[32px] rounded-lg border border-slate-200 bg-[#F8FBFA] px-2.5 py-1 flex items-center">
                 <div
-                  className="[&>svg]:max-h-9 [&>svg]:w-auto"
+                  className="[&>svg]:max-h-8 [&>svg]:w-auto"
                   dangerouslySetInnerHTML={{ __html: formulaPreviewSvg }}
                 />
-              ) : (
-                <span className="text-[13px] text-slate-400">
-                  Xem trước công thức khoa học vector sẽ hiển thị tại đây.
-                </span>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
 
-        {/* 10. Freehand Drawing / Handwriting (Zoom-Invariant Normalized SVG) */}
+        {/* 12. Freehand Drawing / Handwriting */}
         {question.type === 'drawing' && (
           <div className="space-y-1.5 h-full flex flex-col">
             {!readOnly && (
@@ -694,7 +872,6 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                 readOnly ? 'cursor-default' : 'cursor-crosshair'
               }`}
             >
-              {/* Subtle grid lines */}
               <defs>
                 <pattern id={`grid-${question.id}`} width="40" height="40" patternUnits="userSpaceOnUse">
                   <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#E2E8F0" strokeWidth="1" />
@@ -716,7 +893,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
           </div>
         )}
 
-        {/* 11. Diagram / Map / Image Labeling */}
+        {/* 13. Diagram / Map / Image Labeling */}
         {question.type === 'diagram_label' && (
           <div className="space-y-1.5">
             {(question.diagramPins || []).map((pin) => (
@@ -741,7 +918,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
           </div>
         )}
 
-        {/* 12. Practical Attachment */}
+        {/* 14. Practical Attachment */}
         {question.type === 'attachment' && (
           <div className="space-y-1.5">
             {!readOnly && (
