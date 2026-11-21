@@ -15,6 +15,8 @@ import type {
   InteractiveQuestion,
   InteractiveWorksheet,
   MatchingPair,
+  PlainAnnotationKind,
+  PlainPdfAnnotation,
   QuestionGradingDetail,
   StudentAnswerMap,
   StudentAttachmentMeta,
@@ -348,20 +350,89 @@ export async function exportTeacherMasterPackage(
   ]);
 }
 
+const VALID_PLAIN_ANNOTATION_KINDS = new Set<PlainAnnotationKind>([
+  'check',
+  'text',
+  'number',
+  'line',
+  'pen',
+  'callout',
+]);
+
+function clamp01(val: unknown, fallback = 0): number {
+  const n = Number(val);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(1, n));
+}
+
+export function sanitizePlainAnnotations(raw: unknown): PlainPdfAnnotation[] {
+  if (!Array.isArray(raw)) return [];
+  const result: PlainPdfAnnotation[] = [];
+  for (const item of raw.slice(0, 600)) {
+    if (!item || typeof item !== 'object') continue;
+    const obj = item as Record<string, unknown>;
+    const kind = String(obj.kind || '') as PlainAnnotationKind;
+    if (!VALID_PLAIN_ANNOTATION_KINDS.has(kind)) continue;
+    const pageIndex = Math.max(0, Math.floor(Number(obj.pageIndex) || 0));
+    const color =
+      typeof obj.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(obj.color.trim())
+        ? obj.color.trim()
+        : '#164E63';
+    const markRaw = String(obj.markSymbol || '');
+    const markSymbol: 'check' | 'cross' | 'circle' | undefined =
+      markRaw === 'check' || markRaw === 'cross' || markRaw === 'circle' ? markRaw : undefined;
+    const points = Array.isArray(obj.points)
+      ? obj.points
+          .slice(0, 800)
+          .filter((p) => p && typeof p === 'object')
+          .map((p) => ({
+            x: clamp01((p as Record<string, unknown>).x),
+            y: clamp01((p as Record<string, unknown>).y),
+          }))
+      : undefined;
+
+    result.push({
+      id:
+        typeof obj.id === 'string' && obj.id.trim()
+          ? obj.id.slice(0, 80)
+          : `ann-${Date.now()}-${result.length}`,
+      pageIndex,
+      kind,
+      color,
+      x: clamp01(obj.x),
+      y: clamp01(obj.y),
+      x2: obj.x2 !== undefined ? clamp01(obj.x2) : undefined,
+      y2: obj.y2 !== undefined ? clamp01(obj.y2) : undefined,
+      width:
+        obj.width !== undefined ? Math.max(0.06, Math.min(0.85, Number(obj.width) || 0.24)) : undefined,
+      markSymbol,
+      text: typeof obj.text === 'string' ? obj.text.slice(0, 2000) : undefined,
+      strokeWidth:
+        obj.strokeWidth !== undefined
+          ? Math.max(1, Math.min(10, Number(obj.strokeWidth) || 2.5))
+          : undefined,
+      points: points && points.length > 0 ? points : undefined,
+      createdAt: Number(obj.createdAt || Date.now()),
+    });
+  }
+  return result;
+}
+
 /**
  * Exports a Student Saved / Submitted PDF (.pdf, application/pdf):
  * 1. Visible PDF pages: ALWAYS visually renders all answers, selection marks, matching lines,
- *    drag-drop cards, fill-in-the-blank values, formulas, handwriting strokes & student info
+ *    drag-drop cards, fill-in-the-blank values, formulas, handwriting strokes, direct PDF marks & student info
  *    so any standard PDF reader (Chrome, Preview, Adobe, Zalo) displays the full completed work.
  * 2. Standard PDF /Names/EmbeddedFiles: stores clean un-flattened base PDF + structured answers +
- *    safe binary attachments + SHA-256 integrity so reopening in PDF EDU STUDIO restores all
- *    interactive controls cleanly for further editing or teacher grading.
+ *    direct plain-PDF annotations + safe binary attachments + SHA-256 integrity so reopening in
+ *    PDF EDU STUDIO restores all interactive controls cleanly for further editing or teacher grading.
  * STRICT SECURITY: Never embeds any trusted score field; blocks unsafe attachment extensions.
  */
 export async function exportStudentSubmissionPackage(params: {
   worksheet: InteractiveWorksheet;
   student: StudentProfileInfo;
   answers: StudentAnswerMap;
+  plainAnnotations?: PlainPdfAnnotation[];
   pdfBytes: Uint8Array;
   startedAt: number;
   submissionId?: string;
@@ -423,6 +494,8 @@ export async function exportStudentSubmissionPackage(params: {
     };
   }
 
+  const cleanPlainAnnotations = sanitizePlainAnnotations(params.plainAnnotations);
+
   const submissionPayload: StudentSubmissionPayload = {
     packageKind: 'interactive-submission',
     schemaVersion: 2,
@@ -437,18 +510,20 @@ export async function exportStudentSubmissionPackage(params: {
     startedAt: params.startedAt,
     submittedAt: Date.now(),
     answers: sanitizedAnswers,
+    plainAnnotations: cleanPlainAnnotations.length > 0 ? cleanPlainAnnotations : undefined,
   };
 
   const safeSnapshot = sanitizeWorksheetForStudent(params.worksheet);
   const subBytes = encodeUtf8(JSON.stringify(submissionPayload, null, 2));
   const snapBytes = encodeUtf8(JSON.stringify(safeSnapshot, null, 2));
 
-  // Render visible PDF pages with all visual answers, marks, connector lines & strokes
+  // Render visible PDF pages with all visual answers, marks, connector lines, direct annotations & strokes
   const visualPdfBytes = await renderInteractiveAnswersToPdf({
     pdfBytes: cleanBasePdf,
     worksheet: safeSnapshot,
     student: submissionPayload.student,
     answers: params.answers,
+    plainAnnotations: cleanPlainAnnotations,
   });
 
   const digestChunks: Uint8Array[] = [cleanBasePdf, subBytes, snapBytes];
@@ -537,8 +612,9 @@ export type ParsedInteractivePackage =
   | {
       kind: 'plain-pdf';
       pdfBytes: Uint8Array;
-      integrityValid: false;
-      warning: string;
+      integrityValid: boolean;
+      metadataStatus: 'none' | 'corrupted';
+      warning?: string;
     };
 
 /**
@@ -562,15 +638,22 @@ export async function peekPdfInteractiveKind(
   }
 }
 
+const CORRUPTED_METADATA_NOTICE =
+  'Đã mở PDF. Một phần dữ liệu tương tác nhúng trong tệp không đầy đủ hoặc bị lỗi nên đã được bỏ qua; em vẫn có thể làm bài trực tiếp trên trang.';
+
 /**
- * Strictly validates and parses any PDF (.pdf) opened in the interactive worksheet subsystem.
- * Reads ISO 32000-1 /Names/EmbeddedFiles when present; honestly returns kind='plain-pdf'
- * when a standard PDF has no embedded interactive metadata (never fabricates recovery).
+ * 4-step valid-PDF-first parser for ANY PDF (.pdf) opened in PDF EDU STUDIO:
+ *   Step 1: Verify the PDF file itself is valid & readable (throws ONLY when the PDF itself is invalid/corrupted).
+ *   Step 2: Preserve the valid PDF bytes so the document can always open & display.
+ *   Step 3: Safely inspect embedded interactive metadata inside try/catch (metadata errors NEVER block a valid PDF).
+ *   Step 4: Restore interactive regions when valid; open ordinary plain PDF cleanly with NO warning;
+ *           fall back to plain-PDF mode with a calm notice if embedded interactive metadata is corrupted.
  */
 export async function parseInteractivePackage(
   input: File | Uint8Array,
   fileName = 'document.pdf'
 ): Promise<ParsedInteractivePackage> {
+  // ---- STEP 1: Validate that the PDF itself is valid and readable ----
   const rawBytes = input instanceof Uint8Array ? input : new Uint8Array(await input.arrayBuffer());
   if (rawBytes.byteLength === 0) {
     throw new Error(`Tệp "${fileName}" rỗng hoặc không đọc được.`);
@@ -584,235 +667,261 @@ export async function parseInteractivePackage(
     throw new Error(`Tệp "${fileName}" không phải tài liệu PDF hợp lệ (.pdf).`);
   }
 
+  try {
+    const loadedDoc = await PDFDocument.load(rawBytes, { ignoreEncryption: true });
+    if (loadedDoc.getPageCount() < 1) {
+      throw new Error('PDF has zero pages');
+    }
+  } catch {
+    throw new Error(`Không thể mở tệp PDF "${fileName}" vì cấu trúc PDF bị hỏng hoặc không đọc được.`);
+  }
+
+  // ---- STEP 2 & 3: Safely inspect embedded interactive metadata (never fail a valid PDF) ----
   let embedded: Record<string, Uint8Array>;
   try {
     embedded = await readPdfEmbeddedFiles(rawBytes);
-  } catch (err) {
-    if (err instanceof Error && err.message.includes('không an toàn')) {
-      throw err;
-    }
-    throw new Error(`Không thể đọc cấu trúc tệp PDF "${fileName}" (tệp có thể bị hỏng).`);
+  } catch {
+    return {
+      kind: 'plain-pdf',
+      pdfBytes: rawBytes,
+      integrityValid: false,
+      metadataStatus: 'corrupted',
+      warning: CORRUPTED_METADATA_NOTICE,
+    };
   }
 
-  let integrityManifest: InteractivePackageIntegrity | null = null;
-  const intBytes = embedded[PDF_EMBED_NAMES.INTEGRITY];
-  if (intBytes) {
-    try {
+  const hasInteractiveMetadata = Boolean(
+    embedded[PDF_EMBED_NAMES.WORKSHEET] ||
+      embedded[PDF_EMBED_NAMES.TEACHER_MASTER] ||
+      embedded[PDF_EMBED_NAMES.SUBMISSION] ||
+      embedded[PDF_EMBED_NAMES.INTEGRITY] ||
+      embedded[PDF_EMBED_NAMES.WORKSHEET_SNAPSHOT]
+  );
+
+  // Case A: Standard plain PDF (no PDF EDU STUDIO interactive metadata) -> open cleanly with NO warning
+  if (!hasInteractiveMetadata) {
+    return {
+      kind: 'plain-pdf',
+      pdfBytes: rawBytes,
+      integrityValid: true,
+      metadataStatus: 'none',
+    };
+  }
+
+  // ---- STEP 4: Restore interactive data safely; fall back to plain-PDF mode if metadata is corrupted ----
+  try {
+    let integrityManifest: InteractivePackageIntegrity | null = null;
+    const intBytes = embedded[PDF_EMBED_NAMES.INTEGRITY];
+    if (intBytes) {
       integrityManifest = JSON.parse(new TextDecoder().decode(intBytes)) as InteractivePackageIntegrity;
-    } catch {
-      throw new Error(`Tệp PDF "${fileName}" có mã kiểm tra toàn vẹn bị lỗi.`);
     }
-  }
 
-  const embeddedCleanPdf = embedded[PDF_EMBED_NAMES.CLEAN_SOURCE_PDF];
-  const basePdfBytes =
-    embeddedCleanPdf && validatePdfHeaderBytes(embeddedCleanPdf)
-      ? embeddedCleanPdf
-      : await stripEmbeddedFilesFromPdfBytes(rawBytes);
+    const embeddedCleanPdf = embedded[PDF_EMBED_NAMES.CLEAN_SOURCE_PDF];
+    const basePdfBytes =
+      embeddedCleanPdf && validatePdfHeaderBytes(embeddedCleanPdf)
+        ? embeddedCleanPdf
+        : await stripEmbeddedFilesFromPdfBytes(rawBytes);
 
-  // Case 1: Student Interactive Worksheet PDF
-  const wsBytes = embedded[PDF_EMBED_NAMES.WORKSHEET];
-  if (wsBytes) {
-    let parsed: { packageKind?: string; worksheet?: InteractiveWorksheet };
-    try {
-      parsed = JSON.parse(new TextDecoder().decode(wsBytes));
-    } catch {
-      throw new Error(`Dữ liệu bài tập nhúng trong "${fileName}" không phải JSON hợp lệ.`);
-    }
-    if (parsed.packageKind !== 'interactive-worksheet' || !parsed.worksheet?.worksheetId) {
-      throw new Error(`Tệp PDF "${fileName}" có dữ liệu bài tập không đúng cấu trúc.`);
-    }
-    let integrityValid = true;
-    if (integrityManifest) {
-      const computed = await computeIntegrityDigest([basePdfBytes, wsBytes]);
-      if (computed.algorithm === integrityManifest.algorithm && computed.digest !== integrityManifest.digest) {
-        throw new Error(
-          `Tệp PDF "${fileName}" không khớp mã toàn vẹn dữ liệu (có thể bị hỏng hoặc chỉnh sửa trái phép).`
-        );
+    // Case B1: Student Interactive Worksheet PDF
+    const wsBytes = embedded[PDF_EMBED_NAMES.WORKSHEET];
+    if (wsBytes) {
+      const parsed = JSON.parse(new TextDecoder().decode(wsBytes)) as {
+        packageKind?: string;
+        worksheet?: InteractiveWorksheet;
+      };
+      if (parsed.packageKind !== 'interactive-worksheet' || !parsed.worksheet?.worksheetId) {
+        throw new Error('Invalid worksheet schema');
       }
-      integrityValid = computed.digest === integrityManifest.digest;
-    }
-    return {
-      kind: 'worksheet',
-      worksheet: sanitizeWorksheetForStudent(parsed.worksheet),
-      pdfBytes: basePdfBytes,
-      integrityValid,
-    };
-  }
-
-  // Case 2: Teacher Master PDF
-  const mBytes = embedded[PDF_EMBED_NAMES.TEACHER_MASTER];
-  if (mBytes) {
-    let parsed: {
-      packageKind?: string;
-      worksheet?: InteractiveWorksheet;
-      answerKeys?: TeacherAnswerKeyMap;
-    };
-    try {
-      parsed = JSON.parse(new TextDecoder().decode(mBytes));
-    } catch {
-      throw new Error(`Dữ liệu bản gốc giáo viên nhúng trong "${fileName}" bị lỗi.`);
-    }
-    if (parsed.packageKind !== 'interactive-teacher-master' || !parsed.worksheet?.worksheetId) {
-      throw new Error(`Tệp PDF "${fileName}" không đúng cấu trúc bản gốc giáo viên.`);
-    }
-    let integrityValid = true;
-    if (integrityManifest) {
-      const computed = await computeIntegrityDigest([basePdfBytes, mBytes]);
-      if (computed.algorithm === integrityManifest.algorithm && computed.digest !== integrityManifest.digest) {
-        throw new Error(`Bản gốc giáo viên "${fileName}" không khớp mã toàn vẹn dữ liệu.`);
-      }
-      integrityValid = computed.digest === integrityManifest.digest;
-    }
-    return {
-      kind: 'teacher-master',
-      worksheet: parsed.worksheet,
-      answerKeys: parsed.answerKeys || {},
-      pdfBytes: basePdfBytes,
-      integrityValid,
-    };
-  }
-
-  // Case 3: Student Saved / Submitted Interactive PDF
-  const subBytes = embedded[PDF_EMBED_NAMES.SUBMISSION];
-  if (subBytes) {
-    let parsedSub: StudentSubmissionPayload;
-    try {
-      parsedSub = JSON.parse(new TextDecoder().decode(subBytes)) as StudentSubmissionPayload;
-    } catch {
-      throw new Error(`Dữ liệu bài làm nhúng trong "${fileName}" không phải JSON hợp lệ.`);
-    }
-    if (
-      parsedSub.packageKind !== 'interactive-submission' ||
-      !parsedSub.submissionId ||
-      !parsedSub.worksheetId ||
-      typeof parsedSub.answers !== 'object'
-    ) {
-      throw new Error(`Tệp PDF "${fileName}" có dữ liệu bài làm học sinh không hợp lệ.`);
-    }
-
-    const snapBytes = embedded[PDF_EMBED_NAMES.WORKSHEET_SNAPSHOT] || null;
-    let worksheetSnapshot: InteractiveWorksheet | undefined;
-    if (snapBytes) {
-      try {
-        worksheetSnapshot = sanitizeWorksheetForStudent(
-          JSON.parse(new TextDecoder().decode(snapBytes)) as InteractiveWorksheet
-        );
-      } catch {
-        // Optional snapshot fallback
-      }
-    }
-
-    const digestChunks: Uint8Array[] = [basePdfBytes, subBytes];
-    if (snapBytes) digestChunks.push(snapBytes);
-
-    const cleanAnswers: StudentAnswerMap = {};
-    for (const [qId, rawAns] of Object.entries(parsedSub.answers || {})) {
-      if (!rawAns || typeof rawAns !== 'object') continue;
-      // Pick ONLY allowed student answer fields (NEVER trust any injected score fields)
-      const rehydratedAttachments: StudentAttachmentMeta[] = [];
-      if (Array.isArray(rawAns.attachments)) {
-        for (const att of rawAns.attachments.slice(0, MAX_ATTACHMENTS_PER_QUESTION)) {
-          const safeName = sanitizeFileName(String(att.fileName || 'file'));
-          const embedName = `${PDF_EMBED_NAMES.ATTACHMENT_PREFIX}${att.id}_${safeName}`;
-          const attBytes = embedded[embedName];
-          if (!attBytes) continue;
-          const check = validateAttachmentFile({
-            name: safeName,
-            size: attBytes.byteLength,
-            type: att.mimeType,
-          });
-          if (!check.ok) continue;
-          digestChunks.push(attBytes);
-          rehydratedAttachments.push({
-            id: String(att.id),
-            fileName: safeName,
-            mimeType: String(att.mimeType || 'application/octet-stream'),
-            size: attBytes.byteLength,
-            dataUrl: uint8ArrayToDataUrl(attBytes, String(att.mimeType || 'application/octet-stream')),
-            addedAt: Number(att.addedAt || Date.now()),
-          });
+      let integrityValid = true;
+      if (integrityManifest) {
+        const computed = await computeIntegrityDigest([basePdfBytes, wsBytes]);
+        if (computed.algorithm === integrityManifest.algorithm && computed.digest !== integrityManifest.digest) {
+          throw new Error('Worksheet integrity mismatch');
         }
+        integrityValid = computed.digest === integrityManifest.digest;
       }
-
-      cleanAnswers[qId] = {
-        questionId: qId,
-        updatedAt: Number(rawAns.updatedAt || Date.now()),
-        mcqSelectedId: typeof rawAns.mcqSelectedId === 'string' ? rawAns.mcqSelectedId : undefined,
-        mcqMultiSelectedIds: Array.isArray(rawAns.mcqMultiSelectedIds)
-          ? rawAns.mcqMultiSelectedIds.map(String)
-          : undefined,
-        tfAnswers: rawAns.tfAnswers && typeof rawAns.tfAnswers === 'object' ? { ...rawAns.tfAnswers } : undefined,
-        shortText: typeof rawAns.shortText === 'string' ? rawAns.shortText.slice(0, 500) : undefined,
-        numberValue: typeof rawAns.numberValue === 'string' ? rawAns.numberValue.slice(0, 60) : undefined,
-        fillBlankAnswers:
-          rawAns.fillBlankAnswers && typeof rawAns.fillBlankAnswers === 'object'
-            ? { ...rawAns.fillBlankAnswers }
-            : undefined,
-        essayText: typeof rawAns.essayText === 'string' ? rawAns.essayText.slice(0, 12000) : undefined,
-        matchingPairs: Array.isArray(rawAns.matchingPairs)
-          ? rawAns.matchingPairs
-              .filter((p) => p && typeof p.fromId === 'string' && typeof p.toId === 'string')
-              .map((p) => ({ fromId: p.fromId, toId: p.toId }))
-          : undefined,
-        orderingIds: Array.isArray(rawAns.orderingIds) ? rawAns.orderingIds.map(String) : undefined,
-        readingAnswers:
-          rawAns.readingAnswers && typeof rawAns.readingAnswers === 'object'
-            ? { ...rawAns.readingAnswers }
-            : undefined,
-        formulaLatex: typeof rawAns.formulaLatex === 'string' ? rawAns.formulaLatex.slice(0, 1500) : undefined,
-        drawingStrokes: Array.isArray(rawAns.drawingStrokes) ? rawAns.drawingStrokes.slice(0, 500) : undefined,
-        diagramLabels:
-          rawAns.diagramLabels && typeof rawAns.diagramLabels === 'object'
-            ? { ...rawAns.diagramLabels }
-            : undefined,
-        attachments: rehydratedAttachments.length > 0 ? rehydratedAttachments : undefined,
+      return {
+        kind: 'worksheet',
+        worksheet: sanitizeWorksheetForStudent(parsed.worksheet),
+        pdfBytes: basePdfBytes,
+        integrityValid,
       };
     }
 
-    let integrityValid = true;
-    if (integrityManifest) {
-      const computed = await computeIntegrityDigest(digestChunks);
-      if (computed.algorithm === integrityManifest.algorithm && computed.digest !== integrityManifest.digest) {
-        throw new Error(
-          `Bài nộp PDF "${fileName}" không khớp mã toàn vẹn (dữ liệu nhúng có thể đã bị sửa hoặc lỗi truyền tải).`
-        );
+    // Case B2: Teacher Master PDF
+    const mBytes = embedded[PDF_EMBED_NAMES.TEACHER_MASTER];
+    if (mBytes) {
+      const parsed = JSON.parse(new TextDecoder().decode(mBytes)) as {
+        packageKind?: string;
+        worksheet?: InteractiveWorksheet;
+        answerKeys?: TeacherAnswerKeyMap;
+      };
+      if (parsed.packageKind !== 'interactive-teacher-master' || !parsed.worksheet?.worksheetId) {
+        throw new Error('Invalid teacher-master schema');
       }
-      integrityValid = computed.digest === integrityManifest.digest;
+      let integrityValid = true;
+      if (integrityManifest) {
+        const computed = await computeIntegrityDigest([basePdfBytes, mBytes]);
+        if (computed.algorithm === integrityManifest.algorithm && computed.digest !== integrityManifest.digest) {
+          throw new Error('Teacher master integrity mismatch');
+        }
+        integrityValid = computed.digest === integrityManifest.digest;
+      }
+      return {
+        kind: 'teacher-master',
+        worksheet: parsed.worksheet,
+        answerKeys: parsed.answerKeys || {},
+        pdfBytes: basePdfBytes,
+        integrityValid,
+      };
     }
 
-    return {
-      kind: 'submission',
-      submission: {
-        packageKind: 'interactive-submission',
-        schemaVersion: 2,
-        submissionId: String(parsedSub.submissionId),
-        worksheetId: String(parsedSub.worksheetId),
-        worksheetTitle: String(parsedSub.worksheetTitle || 'Bài tập PDF'),
-        student: {
-          studentName: String(parsedSub.student?.studentName || 'Học sinh chưa ghi tên').slice(0, 120),
-          className: String(parsedSub.student?.className || '').slice(0, 60),
-          studentCode: String(parsedSub.student?.studentCode || '').slice(0, 40),
+    // Case B3: Student Saved / Submitted Interactive PDF
+    const subBytes = embedded[PDF_EMBED_NAMES.SUBMISSION];
+    if (subBytes) {
+      const parsedSub = JSON.parse(new TextDecoder().decode(subBytes)) as StudentSubmissionPayload;
+      if (
+        parsedSub.packageKind !== 'interactive-submission' ||
+        !parsedSub.submissionId ||
+        !parsedSub.worksheetId ||
+        typeof parsedSub.answers !== 'object'
+      ) {
+        throw new Error('Invalid submission schema');
+      }
+
+      const snapBytes = embedded[PDF_EMBED_NAMES.WORKSHEET_SNAPSHOT] || null;
+      let worksheetSnapshot: InteractiveWorksheet | undefined;
+      if (snapBytes) {
+        try {
+          worksheetSnapshot = sanitizeWorksheetForStudent(
+            JSON.parse(new TextDecoder().decode(snapBytes)) as InteractiveWorksheet
+          );
+        } catch {
+          // Optional snapshot fallback
+        }
+      }
+
+      const digestChunks: Uint8Array[] = [basePdfBytes, subBytes];
+      if (snapBytes) digestChunks.push(snapBytes);
+
+      const cleanAnswers: StudentAnswerMap = {};
+      for (const [qId, rawAns] of Object.entries(parsedSub.answers || {})) {
+        if (!rawAns || typeof rawAns !== 'object') continue;
+        // Pick ONLY allowed student answer fields (NEVER trust any injected score fields)
+        const rehydratedAttachments: StudentAttachmentMeta[] = [];
+        if (Array.isArray(rawAns.attachments)) {
+          for (const att of rawAns.attachments.slice(0, MAX_ATTACHMENTS_PER_QUESTION)) {
+            const safeName = sanitizeFileName(String(att.fileName || 'file'));
+            const embedName = `${PDF_EMBED_NAMES.ATTACHMENT_PREFIX}${att.id}_${safeName}`;
+            const attBytes = embedded[embedName];
+            if (!attBytes) continue;
+            const check = validateAttachmentFile({
+              name: safeName,
+              size: attBytes.byteLength,
+              type: att.mimeType,
+            });
+            if (!check.ok) continue;
+            digestChunks.push(attBytes);
+            rehydratedAttachments.push({
+              id: String(att.id),
+              fileName: safeName,
+              mimeType: String(att.mimeType || 'application/octet-stream'),
+              size: attBytes.byteLength,
+              dataUrl: uint8ArrayToDataUrl(attBytes, String(att.mimeType || 'application/octet-stream')),
+              addedAt: Number(att.addedAt || Date.now()),
+            });
+          }
+        }
+
+        cleanAnswers[qId] = {
+          questionId: qId,
+          updatedAt: Number(rawAns.updatedAt || Date.now()),
+          mcqSelectedId: typeof rawAns.mcqSelectedId === 'string' ? rawAns.mcqSelectedId : undefined,
+          mcqMultiSelectedIds: Array.isArray(rawAns.mcqMultiSelectedIds)
+            ? rawAns.mcqMultiSelectedIds.map(String)
+            : undefined,
+          tfAnswers: rawAns.tfAnswers && typeof rawAns.tfAnswers === 'object' ? { ...rawAns.tfAnswers } : undefined,
+          shortText: typeof rawAns.shortText === 'string' ? rawAns.shortText.slice(0, 500) : undefined,
+          numberValue: typeof rawAns.numberValue === 'string' ? rawAns.numberValue.slice(0, 60) : undefined,
+          fillBlankAnswers:
+            rawAns.fillBlankAnswers && typeof rawAns.fillBlankAnswers === 'object'
+              ? { ...rawAns.fillBlankAnswers }
+              : undefined,
+          essayText: typeof rawAns.essayText === 'string' ? rawAns.essayText.slice(0, 12000) : undefined,
+          matchingPairs: Array.isArray(rawAns.matchingPairs)
+            ? rawAns.matchingPairs
+                .filter((p) => p && typeof p.fromId === 'string' && typeof p.toId === 'string')
+                .map((p) => ({ fromId: p.fromId, toId: p.toId }))
+            : undefined,
+          orderingIds: Array.isArray(rawAns.orderingIds) ? rawAns.orderingIds.map(String) : undefined,
+          readingAnswers:
+            rawAns.readingAnswers && typeof rawAns.readingAnswers === 'object'
+              ? { ...rawAns.readingAnswers }
+              : undefined,
+          formulaLatex: typeof rawAns.formulaLatex === 'string' ? rawAns.formulaLatex.slice(0, 1500) : undefined,
+          drawingStrokes: Array.isArray(rawAns.drawingStrokes) ? rawAns.drawingStrokes.slice(0, 500) : undefined,
+          diagramLabels:
+            rawAns.diagramLabels && typeof rawAns.diagramLabels === 'object'
+              ? { ...rawAns.diagramLabels }
+              : undefined,
+          attachments: rehydratedAttachments.length > 0 ? rehydratedAttachments : undefined,
+        };
+      }
+
+      const cleanPlainAnnotations = sanitizePlainAnnotations(parsedSub.plainAnnotations);
+
+      let integrityValid = true;
+      if (integrityManifest) {
+        const computed = await computeIntegrityDigest(digestChunks);
+        if (computed.algorithm === integrityManifest.algorithm && computed.digest !== integrityManifest.digest) {
+          throw new Error('Submission integrity mismatch');
+        }
+        integrityValid = computed.digest === integrityManifest.digest;
+      }
+
+      return {
+        kind: 'submission',
+        submission: {
+          packageKind: 'interactive-submission',
+          schemaVersion: 2,
+          submissionId: String(parsedSub.submissionId),
+          worksheetId: String(parsedSub.worksheetId),
+          worksheetTitle: String(parsedSub.worksheetTitle || 'Bài tập PDF'),
+          student: {
+            studentName: String(parsedSub.student?.studentName || 'Học sinh chưa ghi tên').slice(0, 120),
+            className: String(parsedSub.student?.className || '').slice(0, 60),
+            studentCode: String(parsedSub.student?.studentCode || '').slice(0, 40),
+          },
+          startedAt: Number(parsedSub.startedAt || Date.now()),
+          submittedAt: Number(parsedSub.submittedAt || Date.now()),
+          answers: cleanAnswers,
+          plainAnnotations: cleanPlainAnnotations.length > 0 ? cleanPlainAnnotations : undefined,
         },
-        startedAt: Number(parsedSub.startedAt || Date.now()),
-        submittedAt: Number(parsedSub.submittedAt || Date.now()),
-        answers: cleanAnswers,
-      },
-      worksheetSnapshot,
-      pdfBytes: basePdfBytes,
-      visualPdfBytes: rawBytes,
-      integrityValid,
+        worksheetSnapshot,
+        pdfBytes: basePdfBytes,
+        visualPdfBytes: rawBytes,
+        integrityValid,
+      };
+    }
+
+    // Embedded files contained only partial/dangling interactive markers (e.g. integrity without payload)
+    return {
+      kind: 'plain-pdf',
+      pdfBytes: rawBytes,
+      integrityValid: false,
+      metadataStatus: 'corrupted',
+      warning: CORRUPTED_METADATA_NOTICE,
+    };
+  } catch {
+    // Case C: Valid PDF whose embedded interactive metadata is corrupted/incomplete -> keep PDF open cleanly
+    return {
+      kind: 'plain-pdf',
+      pdfBytes: rawBytes,
+      integrityValid: false,
+      metadataStatus: 'corrupted',
+      warning: CORRUPTED_METADATA_NOTICE,
     };
   }
-
-  // Case 4: Standard plain PDF without PDF EDU STUDIO embedded interactive metadata
-  return {
-    kind: 'plain-pdf',
-    pdfBytes: rawBytes,
-    integrityValid: false,
-    warning:
-      `Tệp "${fileName}" là PDF thông thường (không có dữ liệu tương tác nhúng hoặc dữ liệu nhúng đã bị công cụ ngoài lược bỏ). Không thể tự động khôi phục các vùng câu hỏi tương tác.`,
-  };
 }
 
 /**
@@ -1319,15 +1428,24 @@ const MATCH_LINE_COLORS = [
   rgb(0.14, 0.52, 0.24), // green
 ];
 
+function parseHexToPdfRgb(hex?: string) {
+  const clean = (hex || '#164E63').replace('#', '');
+  const num = parseInt(clean.padEnd(6, '0').slice(0, 6), 16);
+  if (Number.isNaN(num)) return rgb(0.09, 0.31, 0.39);
+  return rgb(((num >> 16) & 255) / 255, ((num >> 8) & 255) / 255, (num & 255) / 255);
+}
+
 /**
  * Renders student interactive answers (including actual vector matching lines, placed drag-drop cards,
- * freehand drawing strokes, labels, and optional teacher grades/comments) directly onto PDF pages.
+ * freehand drawing strokes, direct plain-PDF marks/text/lines/callouts, and optional teacher grades/comments)
+ * directly onto PDF pages.
  */
 export async function renderInteractiveAnswersToPdf(params: {
   pdfBytes: Uint8Array;
   worksheet: InteractiveWorksheet;
   student: StudentProfileInfo;
   answers: StudentAnswerMap;
+  plainAnnotations?: PlainPdfAnnotation[];
   grading?: {
     gradingDetails: Record<string, QuestionGradingDetail>;
     totalScore: number;
@@ -1341,7 +1459,12 @@ export async function renderInteractiveAnswersToPdf(params: {
   const pages = pdfDoc.getPages();
 
   // Header Student Info & Optional Teacher Total Score Box on Page 1
-  if (pages[0]) {
+  const hasExplicitStudentMeta = Boolean(
+    (params.student.studentName && params.student.studentName.trim() && params.student.studentName.trim() !== 'Học sinh') ||
+      params.student.className?.trim() ||
+      params.student.studentCode?.trim()
+  );
+  if (pages[0] && (params.grading || !params.worksheet.isPlainPdfMode || hasExplicitStudentMeta)) {
     const p0 = pages[0];
     const { width: pw, height: ph } = p0.getSize();
     const infoBarH = params.grading ? 46 : 26;
@@ -1766,6 +1889,135 @@ export async function renderInteractiveAnswersToPdf(params: {
         7.5,
         rgb(0.78, 0.14, 0.14)
       );
+    }
+  }
+
+  // Render direct plain-PDF student answers/annotations (check, text, number, line, pen, callout)
+  for (const ann of params.plainAnnotations || []) {
+    const page = pages[ann.pageIndex] || pages[0];
+    if (!page) continue;
+    const { width: pw, height: ph } = page.getSize();
+    const col = parseHexToPdfRgb(ann.color);
+    const px = ann.x * pw;
+    const py = ph - ann.y * ph;
+
+    if (ann.kind === 'check') {
+      const sym = ann.markSymbol || 'check';
+      if (sym === 'circle') {
+        page.drawCircle({
+          x: px,
+          y: py,
+          size: 11,
+          borderColor: col,
+          borderWidth: 2,
+          opacity: 0,
+          borderOpacity: 0.95,
+        });
+      } else if (sym === 'cross') {
+        page.drawLine({
+          start: { x: px - 7, y: py + 7 },
+          end: { x: px + 7, y: py - 7 },
+          thickness: 2.2,
+          color: col,
+        });
+        page.drawLine({
+          start: { x: px - 7, y: py - 7 },
+          end: { x: px + 7, y: py + 7 },
+          thickness: 2.2,
+          color: col,
+        });
+      } else {
+        // Crisp vector checkmark
+        page.drawLine({
+          start: { x: px - 7, y: py - 1 },
+          end: { x: px - 2, y: py - 6 },
+          thickness: 2.3,
+          color: col,
+        });
+        page.drawLine({
+          start: { x: px - 2, y: py - 6 },
+          end: { x: px + 8, y: py + 7 },
+          thickness: 2.3,
+          color: col,
+        });
+      }
+    } else if (ann.kind === 'text' || ann.kind === 'number') {
+      const content = (ann.text || '').trim();
+      if (!content) continue;
+      const fontSize = ann.kind === 'number' ? 11 : 10;
+      const boxW = Math.max(
+        ann.kind === 'number' ? 56 : 110,
+        Math.min(pw - px - 12, (ann.width || (ann.kind === 'number' ? 0.15 : 0.28)) * pw)
+      );
+      const font = ann.kind === 'number' ? fonts.sansBold : fonts.sans;
+      const lines = wrapTextLines(font, content, fontSize, Math.max(40, boxW - 10));
+      const lineH = fontSize + 3.5;
+      const boxH = Math.max(20, lines.length * lineH + 8);
+      const boxBottom = Math.max(8, py - boxH);
+      page.drawRectangle({
+        x: Math.max(6, Math.min(pw - boxW - 6, px)),
+        y: boxBottom,
+        width: boxW,
+        height: boxH,
+        color: rgb(0.985, 0.996, 0.994),
+        borderColor: col,
+        borderWidth: 0.9,
+        opacity: 0.92,
+      });
+      let curY = boxBottom + boxH - fontSize - 3;
+      const drawX = Math.max(10, Math.min(pw - boxW - 2, px + 5));
+      for (const line of lines) {
+        if (curY < boxBottom + 2) break;
+        drawSafeLine(page, font, line, drawX, curY, fontSize, col);
+        curY -= lineH;
+      }
+    } else if (ann.kind === 'line' && ann.x2 !== undefined && ann.y2 !== undefined) {
+      const px2 = ann.x2 * pw;
+      const py2 = ph - ann.y2 * ph;
+      const thick = Math.max(1.2, Math.min(4.5, (ann.strokeWidth || 2.5) * 0.75));
+      page.drawLine({
+        start: { x: px, y: py },
+        end: { x: px2, y: py2 },
+        thickness: thick,
+        color: col,
+      });
+      page.drawCircle({ x: px, y: py, size: 3.2, color: col });
+      page.drawCircle({ x: px2, y: py2, size: 3.2, color: col });
+    } else if (ann.kind === 'pen' && ann.points && ann.points.length >= 2) {
+      const thick = Math.max(1, Math.min(4.5, (ann.strokeWidth || 2.5) * 0.7));
+      for (let i = 1; i < ann.points.length; i++) {
+        const p1 = ann.points[i - 1];
+        const p2 = ann.points[i];
+        page.drawLine({
+          start: { x: p1.x * pw, y: ph - p1.y * ph },
+          end: { x: p2.x * pw, y: ph - p2.y * ph },
+          thickness: thick,
+          color: col,
+        });
+      }
+    } else if (ann.kind === 'callout') {
+      const label = (ann.text || 'Chú thích').trim() || 'Chú thích';
+      page.drawCircle({ x: px, y: py, size: 4.5, color: col });
+      const boxW = Math.min(180, Math.max(72, label.length * 5.6 + 14));
+      const boxX = px + 14 + boxW > pw - 8 ? Math.max(8, px - 14 - boxW) : px + 14;
+      const boxBottom = Math.max(8, py - 10);
+      page.drawLine({
+        start: { x: px, y: py },
+        end: { x: boxX > px ? boxX : boxX + boxW, y: boxBottom + 10 },
+        thickness: 1.2,
+        color: col,
+      });
+      page.drawRectangle({
+        x: boxX,
+        y: boxBottom,
+        width: boxW,
+        height: 20,
+        color: rgb(1, 0.992, 0.94),
+        borderColor: col,
+        borderWidth: 1,
+        opacity: 0.96,
+      });
+      drawSafeLine(page, fonts.sansBold, label.slice(0, 34), boxX + 6, boxBottom + 6.5, 8.6, col);
     }
   }
 

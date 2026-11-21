@@ -314,10 +314,34 @@ export interface InteractiveWorksheet {
   durationMinutes?: number;
   dueDate?: string;
   examMode: 'exam' | 'practice';
+  /** True when opened directly from an ordinary plain PDF without pre-authored question boxes */
+  isPlainPdfMode?: boolean;
   pageMapping?: WorksheetPageMapping;
   createdAt: number;
   updatedAt: number;
   questions: InteractiveQuestion[];
+}
+
+export type PlainAnnotationKind = 'check' | 'text' | 'number' | 'line' | 'pen' | 'callout';
+
+/**
+ * Direct student answer/mark placed freely on any PDF page (normalized 0..1 page coordinates, top-left origin).
+ */
+export interface PlainPdfAnnotation {
+  id: string;
+  pageIndex: number;
+  kind: PlainAnnotationKind;
+  color: string;
+  x: number;
+  y: number;
+  x2?: number;
+  y2?: number;
+  width?: number;
+  markSymbol?: 'check' | 'cross' | 'circle';
+  text?: string;
+  strokeWidth?: number;
+  points?: Array<{ x: number; y: number }>;
+  createdAt: number;
 }
 
 export interface DrawingStroke {
@@ -379,6 +403,7 @@ export interface StudentSubmissionPayload {
   startedAt: number;
   submittedAt: number;
   answers: StudentAnswerMap;
+  plainAnnotations?: PlainPdfAnnotation[];
 }
 
 export type DraftStatus = 'in_progress' | 'completed';
@@ -391,6 +416,7 @@ export interface InteractiveDraftRecord {
   pdfBytes: Uint8Array;
   student: StudentProfileInfo;
   answers: StudentAnswerMap;
+  plainAnnotations?: PlainPdfAnnotation[];
   status: DraftStatus;
   createdAt: number;
   updatedAt: number;
@@ -458,6 +484,7 @@ export interface GradedSubmissionRecord {
   submittedAt: number;
   importedAt: number;
   answers: StudentAnswerMap;
+  plainAnnotations?: PlainPdfAnnotation[];
   pdfBytes: Uint8Array;
   worksheetSnapshot?: InteractiveWorksheet;
   gradingDetails: Record<string, QuestionGradingDetail>;

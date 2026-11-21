@@ -73,6 +73,7 @@ import {
   type InteractiveQuestionType,
   type InteractiveSubTab,
   type InteractiveWorksheet,
+  type PlainPdfAnnotation,
   type QuestionGradingDetail,
   type StudentAnswerMap,
   type StudentProfileInfo,
@@ -437,6 +438,8 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
   const [solveWorksheet, setSolveWorksheet] = useState<InteractiveWorksheet | null>(null);
   const [solvePdfBytes, setSolvePdfBytes] = useState<Uint8Array | null>(null);
   const [solveAnswers, setSolveAnswers] = useState<StudentAnswerMap>({});
+  const [solvePlainAnnotations, setSolvePlainAnnotations] = useState<PlainPdfAnnotation[]>([]);
+  const [solveNoticeBanner, setSolveNoticeBanner] = useState<string | null>(null);
   const [solveStudent, setSolveStudent] = useState<StudentProfileInfo>({
     studentName: '',
     className: '',
@@ -501,6 +504,49 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
     refreshLocalLists();
   }, [refreshLocalLists]);
 
+  const openPlainPdfInSolve = useCallback(
+    (fileName: string, pdfBytes: Uint8Array, corruptedMetadataNotice?: string) => {
+      const cleanTitle = fileName.replace(/\.pdf$/i, '').trim() || 'Tài liệu PDF';
+      const now = Date.now();
+      const plainWorksheet: InteractiveWorksheet = {
+        worksheetId: `plain-${now}-${Math.random().toString(36).slice(2, 6)}`,
+        schemaVersion: 2,
+        title: cleanTitle,
+        subject: 'general',
+        subjectLabel: 'Tổng hợp',
+        grade: 12,
+        description: 'Làm bài trực tiếp trên tài liệu PDF.',
+        teacherName: '',
+        examMode: 'practice',
+        isPlainPdfMode: true,
+        createdAt: now,
+        updatedAt: now,
+        questions: [],
+      };
+      setSolveDraftId(`draft-${now}-${Math.random().toString(36).slice(2, 6)}`);
+      setSolveWorksheet(plainWorksheet);
+      setSolvePdfBytes(pdfBytes);
+      setSolveAnswers({});
+      setSolvePlainAnnotations([]);
+      setSolveStartedAt(now);
+      setSolveSavedStatus('idle');
+      setSolveLastSavedAt(null);
+      setSolveFilterUnanswered(false);
+      setSolveTemplateKeysForPractice(undefined);
+      setSolveNoticeBanner(corruptedMetadataNotice || null);
+      setInteractiveTab('solve');
+      if (corruptedMetadataNotice) {
+        notify(corruptedMetadataNotice, 'info');
+      } else {
+        notify(
+          'Đã mở PDF. Em có thể sử dụng các công cụ để làm bài trực tiếp trên trang.',
+          'info'
+        );
+      }
+    },
+    [notify, setInteractiveTab]
+  );
+
   // Auto-load real Online share link (?worksheetUrl=...&code=...) when opened by student
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -509,23 +555,48 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
     if (!worksheetUrl || autoLoadedUrlRef.current === worksheetUrl) return;
     autoLoadedUrlRef.current = worksheetUrl;
     setLoadingOnlineUrl(true);
+    const urlFileName = decodeURIComponent(worksheetUrl.split('/').pop()?.split('?')[0] || 'bai_tap.pdf');
     fetchWorksheetFromUrl(worksheetUrl)
       .then((parsed) => {
-        if (parsed.kind !== 'worksheet') {
-          notify('Liên kết không chứa gói bài tập hợp lệ dành cho học sinh.', 'warning');
+        if (parsed.kind === 'worksheet') {
+          setSolveDraftId(`draft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
+          setSolveWorksheet(parsed.worksheet);
+          setSolvePdfBytes(parsed.pdfBytes);
+          setSolveAnswers({});
+          setSolvePlainAnnotations([]);
+          setSolveNoticeBanner(null);
+          setSolveStartedAt(Date.now());
+          setSolveTemplateKeysForPractice(undefined);
+          setInteractiveTab('solve');
+          notify(
+            `Đã tải bài tập trực tuyến "${parsed.worksheet.title}"${code ? ` (Mã ${code})` : ''}.`,
+            'success'
+          );
           return;
         }
-        setSolveDraftId(`draft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
-        setSolveWorksheet(parsed.worksheet);
-        setSolvePdfBytes(parsed.pdfBytes);
-        setSolveAnswers({});
-        setSolveStartedAt(Date.now());
-        setSolveTemplateKeysForPractice(undefined);
-        setInteractiveTab('solve');
-        notify(
-          `Đã tải bài tập trực tuyến "${parsed.worksheet.title}"${code ? ` (Mã ${code})` : ''}.`,
-          'success'
-        );
+        if (parsed.kind === 'plain-pdf') {
+          openPlainPdfInSolve(
+            urlFileName,
+            parsed.pdfBytes,
+            parsed.metadataStatus === 'corrupted' ? parsed.warning : undefined
+          );
+          return;
+        }
+        if (parsed.kind === 'submission' && parsed.worksheetSnapshot) {
+          setSolveDraftId(`draft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
+          setSolveWorksheet(parsed.worksheetSnapshot);
+          setSolvePdfBytes(parsed.pdfBytes);
+          setSolveStudent(parsed.submission.student);
+          setSolveAnswers(parsed.submission.answers);
+          setSolvePlainAnnotations(parsed.submission.plainAnnotations || []);
+          setSolveNoticeBanner(null);
+          setSolveStartedAt(parsed.submission.startedAt || Date.now());
+          setSolveTemplateKeysForPractice(undefined);
+          setInteractiveTab('solve');
+          notify(`Đã mở bài làm PDF "${parsed.worksheetSnapshot.title}".`, 'success');
+          return;
+        }
+        notify('Liên kết không chứa tệp bài tập PDF phù hợp để làm bài.', 'warning');
       })
       .catch((err) => {
         notify(
@@ -538,7 +609,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       .finally(() => {
         setLoadingOnlineUrl(false);
       });
-  }, [notify, setInteractiveTab]);
+  }, [notify, openPlainPdfInSolve, setInteractiveTab]);
 
   // Handle .pdf file routed from Welcome Screen / Ctrl+O or selected inside Interactive Hub
   const handleExternalPackageFile = useCallback(
@@ -551,6 +622,8 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
           setSolveWorksheet(parsed.worksheet);
           setSolvePdfBytes(parsed.pdfBytes);
           setSolveAnswers({});
+          setSolvePlainAnnotations([]);
+          setSolveNoticeBanner(null);
           setSolveStartedAt(Date.now());
           setSolveTemplateKeysForPractice(undefined);
           setInteractiveTab('solve');
@@ -592,7 +665,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
             await importStudentSubmissionFiles([file]);
             return;
           }
-          // Re-open student's saved PDF right into Làm bài with ALL answers intact & live-editable!
+          // Re-open student's saved PDF right into Làm bài with ALL answers & direct marks intact!
           const allMasters = await interactiveStorage.listTeacherWorksheets();
           const matchedMaster = allMasters.find(
             (m) => m.worksheetId === parsed.submission.worksheetId
@@ -614,13 +687,15 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
           setSolvePdfBytes(parsed.pdfBytes);
           setSolveStudent(parsed.submission.student);
           setSolveAnswers(parsed.submission.answers);
+          setSolvePlainAnnotations(parsed.submission.plainAnnotations || []);
+          setSolveNoticeBanner(null);
           setSolveStartedAt(parsed.submission.startedAt || Date.now());
           setSolveTemplateKeysForPractice(undefined);
           setSolveSavedStatus('saved');
           setSolveLastSavedAt(parsed.submission.submittedAt || Date.now());
           setInteractiveTab('solve');
           notify(
-            `Đã mở lại bài làm PDF "${restoredWorksheet.title}" với đầy đủ câu trả lời nhúng (có thể tiếp tục chỉnh sửa hoặc chuyển sang Chấm bài).`,
+            `Đã mở lại bài làm PDF "${restoredWorksheet.title}" với đầy đủ nội dung đã lưu (có thể tiếp tục chỉnh sửa).`,
             'success'
           );
         } else if (parsed.kind === 'plain-pdf') {
@@ -630,10 +705,11 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
             await importStudentSubmissionFiles([file]);
             return;
           }
-          notify(
-            parsed.warning ||
-              `Tệp "${file.name}" là PDF thông thường (không chứa dữ liệu tương tác nhúng). Nếu muốn tạo bài tập từ tệp này, hãy dùng mục "Tạo bài tập".`,
-            'warning'
+          // Open ANY valid plain PDF directly in Solve mode (no orange warning for ordinary PDFs!)
+          openPlainPdfInSolve(
+            file.name,
+            parsed.pdfBytes,
+            parsed.metadataStatus === 'corrupted' ? parsed.warning : undefined
           );
         }
       } catch (err) {
@@ -641,7 +717,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [notify, refreshLocalLists, setInteractiveTab]
+    [notify, openPlainPdfInSolve, refreshLocalLists, setInteractiveTab]
   );
 
   useEffect(() => {
@@ -1194,6 +1270,8 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       setSolveWorksheet(safeWs);
       setSolvePdfBytes(built.pdfBytes);
       setSolveAnswers({});
+      setSolvePlainAnnotations([]);
+      setSolveNoticeBanner(null);
       setSolveStartedAt(Date.now());
       setSolveSavedStatus('idle');
       setSolveTemplateKeysForPractice(undefined);
@@ -1219,6 +1297,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
         pdfBytes: solvePdfBytes,
         student: solveStudent,
         answers: solveAnswers,
+        plainAnnotations: solvePlainAnnotations,
         status: statusOverride || existing?.status || 'in_progress',
         createdAt: existing?.createdAt || solveStartedAt,
         updatedAt: Date.now(),
@@ -1252,41 +1331,82 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       solveDraftId,
       solveStudent,
       solveAnswers,
+      solvePlainAnnotations,
       solveStartedAt,
       notify,
       refreshLocalLists,
     ]
   );
 
-  // Debounced auto-save every 1.8s whenever answers or student profile change
+  // Debounced auto-save every 1.8s whenever answers, direct PDF annotations, or student profile change
   useEffect(() => {
     if (!solveWorksheet || !solvePdfBytes) return;
-    if (Object.keys(solveAnswers).length === 0 && !solveStudent.studentName.trim()) return;
+    if (
+      Object.keys(solveAnswers).length === 0 &&
+      solvePlainAnnotations.length === 0 &&
+      !solveStudent.studentName.trim()
+    ) {
+      return;
+    }
     const timer = setTimeout(() => {
       persistCurrentSolveDraft(undefined, true);
     }, 1800);
     return () => clearTimeout(timer);
-  }, [solveAnswers, solveStudent, solveWorksheet, solvePdfBytes, persistCurrentSolveDraft]);
+  }, [
+    solveAnswers,
+    solvePlainAnnotations,
+    solveStudent,
+    solveWorksheet,
+    solvePdfBytes,
+    persistCurrentSolveDraft,
+  ]);
 
   const handleLoadOnlineUrl = async () => {
     if (!onlineUrlInput.trim()) return;
     setLoadingOnlineUrl(true);
     try {
+      const urlFileName = decodeURIComponent(
+        onlineUrlInput.trim().split('/').pop()?.split('?')[0] || 'bai_tap.pdf'
+      );
       const parsed = await fetchWorksheetFromUrl(onlineUrlInput);
-      if (parsed.kind !== 'worksheet') {
-        notify('Liên kết này không phải gói bài tập tương tác dành cho học sinh.', 'warning');
+      if (parsed.kind === 'worksheet') {
+        setSolveDraftId(`draft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
+        setSolveWorksheet(parsed.worksheet);
+        setSolvePdfBytes(parsed.pdfBytes);
+        setSolveAnswers({});
+        setSolvePlainAnnotations([]);
+        setSolveNoticeBanner(null);
+        setSolveStartedAt(Date.now());
+        setOnlineUrlInput('');
+        notify(
+          `Đã tải bài tập trực tuyến "${parsed.worksheet.title}" (có thể tiếp tục làm offline).`,
+          'success'
+        );
         return;
       }
-      setSolveDraftId(`draft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
-      setSolveWorksheet(parsed.worksheet);
-      setSolvePdfBytes(parsed.pdfBytes);
-      setSolveAnswers({});
-      setSolveStartedAt(Date.now());
-      setOnlineUrlInput('');
-      notify(
-        `Đã tải bài tập trực tuyến "${parsed.worksheet.title}" (có thể tiếp tục làm offline).`,
-        'success'
-      );
+      if (parsed.kind === 'plain-pdf') {
+        setOnlineUrlInput('');
+        openPlainPdfInSolve(
+          urlFileName,
+          parsed.pdfBytes,
+          parsed.metadataStatus === 'corrupted' ? parsed.warning : undefined
+        );
+        return;
+      }
+      if (parsed.kind === 'submission' && parsed.worksheetSnapshot) {
+        setSolveDraftId(`draft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
+        setSolveWorksheet(parsed.worksheetSnapshot);
+        setSolvePdfBytes(parsed.pdfBytes);
+        setSolveStudent(parsed.submission.student);
+        setSolveAnswers(parsed.submission.answers);
+        setSolvePlainAnnotations(parsed.submission.plainAnnotations || []);
+        setSolveNoticeBanner(null);
+        setSolveStartedAt(parsed.submission.startedAt || Date.now());
+        setOnlineUrlInput('');
+        notify(`Đã mở lại bài làm PDF "${parsed.worksheetSnapshot.title}".`, 'success');
+        return;
+      }
+      notify('Liên kết này không chứa tệp PDF phù hợp để học sinh làm bài.', 'warning');
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Không thể tải bài tập từ URL.', 'error');
     } finally {
@@ -1308,6 +1428,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
         worksheet: solveWorksheet,
         student: effectiveStudent,
         answers: solveAnswers,
+        plainAnnotations: solvePlainAnnotations,
         pdfBytes: solvePdfBytes,
         startedAt: solveStartedAt,
         includeRenderedPdf: true,
@@ -1320,7 +1441,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       notify(
         missingName
           ? 'Đã lưu tệp PDF bài làm (.pdf). Nên điền Họ tên học sinh ở thanh trên trước khi gửi nộp cho giáo viên.'
-          : 'Đã lưu tệp PDF bài làm (.pdf) hiển thị đầy đủ câu trả lời, dấu chọn, đường nối và dữ liệu chỉnh sửa tiếp. Gửi tệp PDF này cho giáo viên qua Zalo/Email.',
+          : 'Đã lưu tệp PDF bài làm (.pdf) hiển thị đầy đủ câu trả lời, dấu chọn, đường nối, nét viết tay và dữ liệu mở lại sửa tiếp. Gửi tệp PDF này cho giáo viên qua Zalo/Email.',
         'success'
       );
     } catch (err) {
@@ -1340,6 +1461,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
         worksheet: solveWorksheet,
         student: effectiveStudent,
         answers: solveAnswers,
+        plainAnnotations: solvePlainAnnotations,
         pdfBytes: solvePdfBytes,
         startedAt: solveStartedAt,
         includeRenderedPdf: true,
@@ -1362,11 +1484,13 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
     setSolvePdfBytes(draft.pdfBytes);
     setSolveStudent(draft.student);
     setSolveAnswers(draft.answers);
+    setSolvePlainAnnotations(draft.plainAnnotations || []);
+    setSolveNoticeBanner(null);
     setSolveStartedAt(draft.createdAt);
     setSolveSavedStatus('saved');
     setSolveLastSavedAt(draft.updatedAt);
     setInteractiveTab('solve');
-    notify(`Đã mở lại bài "${draft.customTitle}" với đầy đủ câu trả lời đã lưu.`, 'success');
+    notify(`Đã mở lại bài "${draft.customTitle}" với đầy đủ nội dung đã lưu.`, 'success');
   };
 
   // =========================================================================
@@ -1503,15 +1627,38 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
         const sub = parsed.submission;
         const matchedMaster =
           allMasters.find((m) => m.worksheetId === sub.worksheetId) || activeTeacherMaster;
-        const worksheetRef = matchedMaster?.worksheet || parsed.worksheetSnapshot;
+        const rawWorksheetRef = matchedMaster?.worksheet || parsed.worksheetSnapshot;
 
-        if (!worksheetRef) {
+        if (!rawWorksheetRef) {
           skipped.push(`${file.name}: Không tìm thấy cấu trúc đề bài tương ứng.`);
           continue;
         }
 
+        const isPlainPdfSubmission =
+          rawWorksheetRef.questions.length === 0 && Boolean(rawWorksheetRef.isPlainPdfMode || sub.plainAnnotations?.length);
+
+        const worksheetRef: InteractiveWorksheet = isPlainPdfSubmission
+          ? {
+              ...rawWorksheetRef,
+              questions: [
+                {
+                  id: 'manual-overall',
+                  code: 'Tổng bài',
+                  title: 'Chấm thủ công trực tiếp trên PDF',
+                  prompt:
+                    'Học sinh làm bài trực tiếp trên trang PDF. Giáo viên xem bài làm trên trang và nhập điểm, nhận xét.',
+                  type: 'essay',
+                  maxPoints: 10,
+                  required: true,
+                  region: { pageIndex: 0, x: 40, y: 100, width: 500, height: 120 },
+                },
+              ],
+            }
+          : rawWorksheetRef;
+
         if (
           activeTeacherMaster &&
+          !isPlainPdfSubmission &&
           sub.worksheetId !== activeTeacherMaster.worksheetId &&
           !allMasters.some((m) => m.worksheetId === sub.worksheetId)
         ) {
@@ -1536,6 +1683,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
           submittedAt: sub.submittedAt,
           importedAt: Date.now(),
           answers: sub.answers,
+          plainAnnotations: sub.plainAnnotations,
           pdfBytes: parsed.pdfBytes,
           worksheetSnapshot: worksheetRef,
           gradingDetails: graded.gradingDetails,
@@ -1629,6 +1777,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
         worksheet: ws,
         student: activeSubmission.student,
         answers: activeSubmission.answers,
+        plainAnnotations: activeSubmission.plainAnnotations,
         grading: {
           gradingDetails: activeSubmission.gradingDetails,
           totalScore: activeSubmission.totalScore,
@@ -2973,7 +3122,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                     Mở bài tập PDF tương tác để làm bài (Online hoặc Offline)
                   </h2>
                   <p className="text-[15.5px] text-slate-600">
-                    Mở tệp bài tập <strong>PDF (*.pdf)</strong> do giáo viên gửi (hoặc mở lại bài làm PDF đã lưu để làm tiếp), dán đường dẫn trực tuyến hợp lệ, hoặc chọn 1 trong 8 phiếu bài tập mẫu THPT bên dưới.
+                    Mở bất kỳ tệp <strong>PDF (*.pdf)</strong> hợp lệ nào — gồm bài tập PDF tương tác giáo viên gửi, bài làm đã lưu, hoặc tài liệu PDF thông thường để làm bài trực tiếp ngay trên trang.
                   </p>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
@@ -2983,7 +3132,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                         <span>Mở tệp bài tập PDF từ máy tính (Offline)</span>
                       </div>
                       <p className="text-[14.5px] text-slate-600">
-                        Hỗ trợ tệp <strong>PDF (*.pdf)</strong> giáo viên gửi qua Zalo/Email hoặc bài làm PDF đã lưu trước đó để làm tiếp khi không có Internet.
+                        Chấp nhận mọi tệp <strong>PDF (*.pdf)</strong> hợp lệ (bài tập tương tác, bài làm đã lưu hoặc phiếu bài tập PDF thông thường) để làm trực tiếp ngay cả khi không có Internet.
                       </p>
                       <button
                         type="button"
@@ -3090,21 +3239,29 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                     className="w-24 rounded-lg border border-slate-300 px-2.5 py-1.5 text-[14.5px] focus:border-[#087F70] outline-none"
                   />
 
-                  <span className="px-3 py-1.5 rounded-lg bg-[#E6F1EF] text-[#164E63] text-[14px] font-bold">
-                    Tiến độ: {solveProgress.done} / {solveProgress.total} câu
-                  </span>
+                  {solveProgress.total > 0 ? (
+                    <>
+                      <span className="px-3 py-1.5 rounded-lg bg-[#E6F1EF] text-[#164E63] text-[14px] font-bold">
+                        Tiến độ: {solveProgress.done} / {solveProgress.total} câu
+                      </span>
 
-                  <button
-                    type="button"
-                    onClick={() => setSolveFilterUnanswered((v) => !v)}
-                    className={`px-3 py-1.5 rounded-lg border text-[14px] font-semibold cursor-pointer ${
-                      solveFilterUnanswered
-                        ? 'bg-amber-100 border-amber-400 text-amber-900'
-                        : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
-                    }`}
-                  >
-                    {solveFilterUnanswered ? 'Đang lọc: Chưa làm' : 'Lọc câu chưa làm'}
-                  </button>
+                      <button
+                        type="button"
+                        onClick={() => setSolveFilterUnanswered((v) => !v)}
+                        className={`px-3 py-1.5 rounded-lg border text-[14px] font-semibold cursor-pointer ${
+                          solveFilterUnanswered
+                            ? 'bg-amber-100 border-amber-400 text-amber-900'
+                            : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        {solveFilterUnanswered ? 'Đang lọc: Chưa làm' : 'Lọc câu chưa làm'}
+                      </button>
+                    </>
+                  ) : (
+                    <span className="px-3 py-1.5 rounded-lg bg-[#E6F1EF] text-[#164E63] text-[14px] font-bold">
+                      Làm trực tiếp · Đã ghi {solvePlainAnnotations.length} mục
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
@@ -3141,8 +3298,9 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                         type="button"
                         onClick={() => {
                           setSolveAnswers({});
+                          setSolvePlainAnnotations([]);
                           setConfirmResetSolve(false);
-                          notify('Đã đặt lại toàn bộ câu trả lời.', 'info');
+                          notify('Đã đặt lại toàn bộ bài đang làm.', 'info');
                         }}
                         className="px-2 py-0.5 rounded bg-red-600 text-white font-semibold cursor-pointer"
                       >
@@ -3168,7 +3326,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                     <span>Lưu thành PDF (.pdf)</span>
                   </button>
 
-                  {solveProgress.done > 0 && (
+                  {(solveProgress.done > 0 || solvePlainAnnotations.length > 0) && (
                     <button
                       type="button"
                       onClick={handleSendActiveSolveToGrade}
@@ -3185,6 +3343,8 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                     onClick={() => {
                       setSolveWorksheet(null);
                       setSolvePdfBytes(null);
+                      setSolvePlainAnnotations([]);
+                      setSolveNoticeBanner(null);
                     }}
                     className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-[14px] text-slate-600 cursor-pointer"
                   >
@@ -3192,6 +3352,20 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                   </button>
                 </div>
               </div>
+
+              {/* Calm informational notice ONLY when a valid PDF had corrupted/unreadable embedded interactive metadata */}
+              {solveNoticeBanner && (
+                <div className="bg-sky-50 border-b border-sky-200 px-4 py-2 flex items-center justify-between gap-3 text-[14px] text-sky-900 shrink-0">
+                  <span>{solveNoticeBanner}</span>
+                  <button
+                    type="button"
+                    onClick={() => setSolveNoticeBanner(null)}
+                    className="px-2 py-0.5 rounded bg-white border border-sky-200 text-sky-800 font-semibold text-[13px] hover:bg-sky-100 cursor-pointer shrink-0"
+                  >
+                    Đóng
+                  </button>
+                </div>
+              )}
 
               {/* Teacher instructions & due date banner (if present) */}
               {(solveWorksheet.instructions || solveWorksheet.dueDate) && (
@@ -3219,6 +3393,9 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                 teacherKeys={solveTemplateKeysForPractice}
                 sourcePdfPages={solveSourcePages}
                 printedPageLabels={solvePrintedLabels}
+                enableDirectPdfTools={true}
+                plainAnnotations={solvePlainAnnotations}
+                onChangePlainAnnotations={setSolvePlainAnnotations}
                 onChangeAnswer={(qId, next) =>
                   setSolveAnswers((prev) => ({ ...prev, [qId]: next }))
                 }
@@ -3337,10 +3514,21 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                             Lớp: <strong>{draft.student.className || '—'}</strong>
                           </span>
                           <span>
-                            Đã làm:{' '}
-                            <strong className="text-[#087F70]">
-                              {answeredCount}/{draft.worksheet.questions.length} câu
-                            </strong>
+                            {draft.worksheet.questions.length > 0 ? (
+                              <>
+                                Đã làm:{' '}
+                                <strong className="text-[#087F70]">
+                                  {answeredCount}/{draft.worksheet.questions.length} câu
+                                </strong>
+                              </>
+                            ) : (
+                              <>
+                                Đã ghi trực tiếp:{' '}
+                                <strong className="text-[#087F70]">
+                                  {draft.plainAnnotations?.length || 0} mục
+                                </strong>
+                              </>
+                            )}
                           </span>
                         </div>
                       </div>
@@ -3370,6 +3558,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                               worksheet: draft.worksheet,
                               student: draft.student,
                               answers: draft.answers,
+                              plainAnnotations: draft.plainAnnotations,
                               pdfBytes: draft.pdfBytes,
                               startedAt: draft.createdAt,
                               includeRenderedPdf: true,
@@ -3729,6 +3918,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                       examMode="exam"
                       selectedQuestionId={selectedGradeQId}
                       answers={activeSubmission.answers}
+                      plainAnnotations={activeSubmission.plainAnnotations}
                       teacherKeys={activeTeacherMaster?.answerKeys}
                       gradingDetails={activeSubmission.gradingDetails}
                       sourcePdfPages={gradingWorksheet.pageMapping?.sourcePdfPages}
