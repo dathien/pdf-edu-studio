@@ -88,10 +88,29 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
   const handleSave = () => {
     onUpdateQuestion({
       teacherApproved: true,
+      teacherModified: true,
+      classificationStatus: 'classified',
       needsReview: false,
     });
     onSaveAndClose?.();
   };
+
+  const hasAnchorsForDirectMode =
+    ((question.type === 'mcq' || question.type === 'mcq_multi') &&
+      (question.mcqOptions?.length || 0) >= 2 &&
+      question.mcqOptions!.every((o) => Boolean(o.anchor))) ||
+    (question.type === 'tf' &&
+      (question.tfStatements?.length || 0) >= 2 &&
+      question.tfStatements!.every((s) => Boolean(s.rowAnchor))) ||
+    (question.type === 'matching' &&
+      question.matching?.mode === 'line' &&
+      (question.matching.itemsA?.length || 0) >= 2 &&
+      (question.matching.itemsB?.length || 0) >= 2 &&
+      question.matching.itemsA.every((a) => Boolean(a.anchor)) &&
+      question.matching.itemsB.every((b) => Boolean(b.anchor))) ||
+    (question.type === 'fill_blank' &&
+      (question.fillBlanks?.length || 0) >= 1 &&
+      question.fillBlanks!.every((f) => Boolean(f.anchor)));
 
   return (
     <div className="flex flex-col h-full bg-white text-[16px] text-slate-900">
@@ -121,7 +140,11 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
               Sửa {question.code}
             </h3>
           </div>
-          {question.teacherApproved ? (
+          {question.classificationStatus === 'unclassified' ? (
+            <span className="px-2.5 py-1 rounded-lg bg-amber-200 text-amber-950 text-[14px] font-bold">
+              Chưa xác định dạng
+            </span>
+          ) : question.teacherApproved ? (
             <span className="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-900 text-[14px] font-bold">
               Đã kiểm tra
             </span>
@@ -135,10 +158,35 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
 
       {/* Main Scrollable Form */}
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
-        {question.detectionNote && (
-          <div className="rounded-xl bg-amber-50 border border-amber-300 px-3.5 py-3 text-[15.5px] text-amber-950 flex items-start gap-2.5 leading-relaxed">
+        {question.classificationStatus === 'unclassified' ? (
+          <div className="rounded-xl bg-amber-50 border-2 border-amber-400 px-3.5 py-3 text-[15.5px] text-amber-950 flex items-start gap-2.5 leading-relaxed">
             <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
-            <span>{question.detectionNote}</span>
+            <span>
+              <strong>Chưa xác định dạng tự động:</strong> Thầy cô hãy chọn đúng dạng câu hỏi ở mục <strong>1. Loại câu hỏi</strong> bên dưới rồi nhấn <strong>Lưu câu hỏi</strong>. Câu hỏi này sẽ chưa hiển thị cho học sinh cho đến khi được phân loại.
+            </span>
+          </div>
+        ) : (
+          question.detectionNote && (
+            <div className="rounded-xl bg-amber-50 border border-amber-300 px-3.5 py-3 text-[15.5px] text-amber-950 flex items-start gap-2.5 leading-relaxed">
+              <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+              <span>{question.detectionNote}</span>
+            </div>
+          )
+        )}
+
+        {/* Attached sub-items (e.g. 1), 2), 3) kept inside the main question!) */}
+        {question.subItems && question.subItems.length > 0 && (
+          <div className="rounded-xl bg-[#F4F8F7] border border-teal-200 px-3.5 py-2.5 space-y-1">
+            <div className="text-[14.5px] font-bold text-[#164E63]">
+              Các mục con gắn trong {question.code} ({question.subItems.length} mục):
+            </div>
+            <ul className="space-y-0.5 text-[14px] text-slate-700">
+              {question.subItems.map((si, idx) => (
+                <li key={idx} className="truncate">
+                  • {si}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 
@@ -157,6 +205,95 @@ export const TeacherQuestionInspector: React.FC<TeacherQuestionInspectorProps> =
             ))}
           </select>
         </label>
+
+        {/* Simple non-technical display mode toggle so teachers can keep PDF text completely uncovered */}
+        {(question.type === 'essay' || question.type === 'short') && (
+          <div className="space-y-1.5">
+            <span className="block text-[15px] font-bold text-[#164E63]">
+              Cách hiển thị ô trả lời trên trang PDF
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateQuestion({
+                    overlayMode: 'drawer_button',
+                    teacherModified: true,
+                    classificationStatus: 'classified',
+                  })
+                }
+                className={`px-3 py-2 min-h-[44px] rounded-xl border text-[14.5px] font-bold cursor-pointer ${
+                  question.overlayMode === 'drawer_button'
+                    ? 'bg-[#087F70] border-[#087F70] text-white'
+                    : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'
+                }`}
+              >
+                Nút "Viết câu trả lời" (gọn, không che chữ)
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateQuestion({
+                    overlayMode: 'box',
+                    teacherModified: true,
+                    classificationStatus: 'classified',
+                  })
+                }
+                className={`px-3 py-2 min-h-[44px] rounded-xl border text-[14.5px] font-bold cursor-pointer ${
+                  question.overlayMode !== 'drawer_button'
+                    ? 'bg-[#087F70] border-[#087F70] text-white'
+                    : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'
+                }`}
+              >
+                Khung viết trên khoảng trống
+              </button>
+            </div>
+          </div>
+        )}
+
+        {hasAnchorsForDirectMode && (
+          <div className="space-y-1.5">
+            <span className="block text-[15px] font-bold text-[#164E63]">
+              Cách tương tác trên trang PDF
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateQuestion({
+                    overlayMode: 'anchored',
+                    teacherModified: true,
+                    classificationStatus: 'classified',
+                  })
+                }
+                className={`px-3 py-2 min-h-[44px] rounded-xl border text-[14.5px] font-bold cursor-pointer ${
+                  question.overlayMode === 'anchored'
+                    ? 'bg-[#087F70] border-[#087F70] text-white'
+                    : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'
+                }`}
+              >
+                Trực tiếp trên PDF (không che hình)
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateQuestion({
+                    overlayMode: 'box',
+                    teacherModified: true,
+                    classificationStatus: 'classified',
+                  })
+                }
+                className={`px-3 py-2 min-h-[44px] rounded-xl border text-[14.5px] font-bold cursor-pointer ${
+                  question.overlayMode !== 'anchored'
+                    ? 'bg-[#087F70] border-[#087F70] text-white'
+                    : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-50'
+                }`}
+              >
+                Khung tương tác riêng
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* 2. Đáp án đúng */}
         <div className="space-y-3 pt-1">

@@ -166,12 +166,25 @@ export interface PdfRegion {
   nh?: number;
 }
 
+/**
+ * Normalized 0..1 anchor in PDF page coordinates (top-left origin).
+ * Ensures zero shift across zoom, scroll, and screen resolutions.
+ */
+export interface PdfPointAnchor {
+  nx: number;
+  ny: number;
+  nw?: number;
+  nh?: number;
+}
+
 export interface MatchingItem {
   id: string; // Stable ID — never use screen pixel positions as answer keys
   label: string;
   latex?: string;
   subLabel?: string;
   imageDataUrl?: string;
+  /** Exact PDF anchor of this item's connection port when overlaid directly on the PDF */
+  anchor?: PdfPointAnchor;
 }
 
 export interface MatchingPair {
@@ -196,6 +209,13 @@ export interface TfStatement {
   id: string;
   label: string; // e.g., "a)", "b)"
   text: string;
+  /** Exact PDF column anchors for direct-on-PDF Đúng / Sai selection */
+  rowAnchor?: {
+    ny: number;
+    trueNx: number;
+    falseNx: number;
+    rowNh?: number;
+  };
 }
 
 export interface FillBlankSlot {
@@ -203,6 +223,7 @@ export interface FillBlankSlot {
   prefix: string;
   suffix: string;
   placeholder?: string;
+  anchor?: PdfPointAnchor;
 }
 
 export interface OrderingItem {
@@ -243,11 +264,21 @@ export interface InteractiveQuestion {
   needsReview?: boolean;
   detectionNote?: string;
   teacherApproved?: boolean;
+  /** Set true whenever the teacher manually edits or creates this question so re-detection preserves it */
+  teacherModified?: boolean;
+  /** Distinguishes verified classified questions from uncertain ones (never silently forced into Essay) */
+  classificationStatus?: 'classified' | 'unclassified';
+  /** Controls how the widget overlays the PDF so original text and images are never obscured */
+  overlayMode?: 'anchored' | 'box' | 'drawer_button';
+  /** Sub-items (e.g., 1), 2), 3)) attached to this main question rather than split into separate questions */
+  subItems?: string[];
+  /** Full bounding box of the detected question on the PDF page (for scrolling & subtle highlight) */
+  questionBounds?: PdfRegion;
   sourcePdfPageNumber?: number; // 1-based original PDF page number
   printedPageLabel?: string; // Printed page number on the textbook/worksheet if detected
 
   // Type-specific student-facing configs (no answer keys here)
-  mcqOptions?: Array<{ id: string; label: string; text: string }>;
+  mcqOptions?: Array<{ id: string; label: string; text: string; anchor?: PdfPointAnchor }>;
   tfStatements?: TfStatement[];
   shortPlaceholder?: string;
   shortUnit?: string;

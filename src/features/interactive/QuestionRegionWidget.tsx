@@ -4,14 +4,18 @@ import {
   AlertCircle,
   ArrowDown,
   ArrowUp,
+  Check,
   CheckCircle2,
   CheckSquare,
   Download,
   Eraser,
   GripVertical,
   Paperclip,
+  PenLine,
   PenTool,
+  RotateCcw,
   Square,
+  Tag,
   Trash2,
   Undo2,
 } from 'lucide-react';
@@ -53,6 +57,7 @@ interface QuestionRegionWidgetProps {
   onUpdateRegion?: (patch: Partial<InteractiveQuestion['region']>) => void;
   onDeleteQuestion?: () => void;
   onChangeAnswer?: (next: StudentQuestionAnswer) => void;
+  onOpenAnswerDrawer?: (questionId: string) => void;
 }
 
 const FORMULA_QUICK_SNIPPETS = [
@@ -143,6 +148,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
   onUpdateRegion,
   onDeleteQuestion,
   onChangeAnswer,
+  onOpenAnswerDrawer,
 }) => {
   const readOnly = mode !== 'solve';
   const [penColor, setPenColor] = useState('#164E63');
@@ -151,6 +157,16 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
   const drawingSvgRef = useRef<SVGSVGElement>(null);
   const activeStrokeRef = useRef<DrawingStroke | null>(null);
   const [liveStroke, setLiveStroke] = useState<DrawingStroke | null>(null);
+  // Anchored SVG matching state (click-to-connect & pointer-drag-to-connect)
+  const [selectedMatchAId, setSelectedMatchAId] = useState<string | null>(null);
+  const [dragMatchLine, setDragMatchLine] = useState<{
+    fromId: string;
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+  } | null>(null);
+  const anchoredOverlayRef = useRef<HTMLDivElement>(null);
 
   const patchAnswer = (patch: Partial<StudentQuestionAnswer>) => {
     if (readOnly || !onChangeAnswer) return;
@@ -352,6 +368,9 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
     patchAnswer({ orderingIds: next });
   };
 
+  const cssPageW = pageWidth * zoom;
+  const cssPageH = pageHeight * zoom;
+
   const boxStyle: React.CSSProperties = {
     left: `${resolvedX * zoom}px`,
     top: `${resolvedY * zoom}px`,
@@ -359,18 +378,756 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
     minHeight: `${resolvedH * zoom}px`,
   };
 
+  // ============================================================================
+  // CASE 1: UNCLASSIFIED QUESTION (NEVER RENDERED IN SOLVE/PREVIEW; COMPACT MARKER IN AUTHOR)
+  // ============================================================================
+  if (question.classificationStatus === 'unclassified') {
+    if (mode === 'solve') return null;
+    return (
+      <div
+        data-question-id={question.id}
+        style={{
+          left: `${resolvedX * zoom}px`,
+          top: `${resolvedY * zoom}px`,
+        }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect?.();
+        }}
+        className={`absolute z-30 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[13px] font-bold shadow-xs cursor-pointer transition-all ${
+          selected
+            ? 'bg-amber-600 border-amber-700 text-white ring-2 ring-amber-300'
+            : 'bg-amber-50/95 border-amber-500 text-amber-950 hover:bg-amber-100'
+        }`}
+        title="Câu hỏi chưa xác định dạng tự động — nhấn để chọn dạng phù hợp"
+      >
+        <Tag className="w-3.5 h-3.5 shrink-0" />
+        <span>{question.code} · Chưa xác định dạng</span>
+        {mode === 'author' && onDeleteQuestion && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDeleteQuestion();
+            }}
+            className="ml-1 p-0.5 rounded hover:bg-red-100 hover:text-red-700 cursor-pointer"
+            title="Xóa câu hỏi này"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // CASE 2: COMPACT NON-COVERING DRAWER BUTTON (ESSAY / SHORT WHEN PDF IS TIGHT)
+  // ============================================================================
+  if (question.overlayMode === 'drawer_button') {
+    const writtenText =
+      question.type === 'essay'
+        ? (answer?.essayText || '').trim()
+        : question.type === 'short'
+          ? (answer?.shortText || '').trim()
+          : '';
+    const hasWritten = writtenText.length > 0;
+
+    return (
+      <div
+        data-question-id={question.id}
+        style={{
+          left: `${resolvedX * zoom}px`,
+          top: `${resolvedY * zoom}px`,
+        }}
+        onPointerDown={mode === 'author' ? startMove : undefined}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (mode === 'solve') {
+            onOpenAnswerDrawer?.(question.id);
+          } else {
+            onSelect?.();
+          }
+        }}
+        className={`absolute z-30 inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 shadow-sm transition-all ${
+          mode === 'author'
+            ? selected
+              ? 'bg-[#087F70] border-[#087F70] text-white ring-2 ring-teal-300 cursor-move'
+              : 'bg-white/95 border-dashed border-[#087F70] text-[#164E63] hover:bg-teal-50 cursor-move'
+            : mode === 'grade'
+              ? selected
+                ? 'bg-red-600 border-red-700 text-white ring-2 ring-red-200 cursor-pointer'
+                : 'bg-red-50/95 border-red-400 text-red-900 cursor-pointer'
+              : hasWritten
+                ? 'bg-[#087F70] border-[#087F70] text-white hover:bg-[#06695d] cursor-pointer'
+                : 'bg-white/96 border-[#087F70] text-[#164E63] hover:bg-[#E6F1EF] cursor-pointer'
+        }`}
+      >
+        <PenLine className="w-4 h-4 shrink-0" />
+        <span className="text-[13.5px] font-bold whitespace-nowrap">
+          {mode === 'author'
+            ? `${question.code} · Viết câu trả lời`
+            : hasWritten
+              ? `Sửa câu trả lời (${writtenText.slice(0, 18)}${writtenText.length > 18 ? '…' : ''})`
+              : 'Viết câu trả lời'}
+        </span>
+        {mode === 'author' && onDeleteQuestion && (
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDeleteQuestion();
+            }}
+            className="p-0.5 rounded hover:bg-red-100 hover:text-red-700 cursor-pointer"
+            title="Xóa câu hỏi này"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // CASE 3: TRANSPARENT PDF-ANCHORED OVERLAYS (MCQ, TF, MATCHING, FILL-BLANK)
+  // NEVER COVERS ORIGINAL PDF TEXT OR ILLUSTRATIONS!
+  // ============================================================================
+  const canRenderAnchoredMcq =
+    question.overlayMode === 'anchored' &&
+    (question.type === 'mcq' || question.type === 'mcq_multi') &&
+    (question.mcqOptions?.length || 0) >= 2 &&
+    question.mcqOptions!.every((o) => Boolean(o.anchor));
+
+  if (canRenderAnchoredMcq) {
+    const isMulti = question.type === 'mcq_multi';
+    const opts = question.mcqOptions || [];
+    const hitSize = Math.max(24, Math.round(24 * zoom));
+    return (
+      <div
+        data-question-id={question.id}
+        className="absolute inset-0 pointer-events-none z-20"
+      >
+        {/* Minimal Author-only header badge at top-right of question */}
+        {mode === 'author' && (
+          <div
+            style={{
+              left: `${Math.min(cssPageW - 190, Math.max(8, (resolvedX + resolvedW - 185) * zoom))}px`,
+              top: `${Math.max(4, resolvedY * zoom - 4)}px`,
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect?.();
+            }}
+            className={`pointer-events-auto absolute inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[12.5px] font-bold shadow-2xs cursor-pointer ${
+              selected
+                ? 'bg-[#087F70] border-[#087F70] text-white'
+                : 'bg-white/92 border-[#087F70]/70 text-[#164E63] hover:bg-teal-50'
+            }`}
+          >
+            <span>
+              {question.code} · {isMulti ? 'Nhiều đáp án' : 'Trắc nghiệm'}
+            </span>
+            {onDeleteQuestion && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteQuestion();
+                }}
+                className="p-0.5 rounded hover:bg-red-100 hover:text-red-700 cursor-pointer"
+                title="Xóa câu hỏi này"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Transparent clickable checkboxes anchored directly beside each option on the PDF */}
+        {opts.map((opt) => {
+          const anc = opt.anchor!;
+          const cx = anc.nx * cssPageW;
+          const cy = anc.ny * cssPageH;
+          const checked = isMulti
+            ? (answer?.mcqMultiSelectedIds || []).includes(opt.id)
+            : answer?.mcqSelectedId === opt.id;
+          const isCorrectKey =
+            mode === 'grade' &&
+            (isMulti
+              ? (teacherKey?.mcqMultiCorrectIds || []).includes(opt.id)
+              : teacherKey?.mcqCorrectId === opt.id);
+
+          return (
+            <button
+              key={opt.id}
+              type="button"
+              style={{
+                left: `${cx}px`,
+                top: `${cy}px`,
+                width: `${hitSize}px`,
+                height: `${hitSize}px`,
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (mode === 'author' || mode === 'grade') {
+                  onSelect?.();
+                  return;
+                }
+                if (isMulti) {
+                  const cur = answer?.mcqMultiSelectedIds || [];
+                  const next = cur.includes(opt.id)
+                    ? cur.filter((id) => id !== opt.id)
+                    : [...cur, opt.id];
+                  patchAnswer({ mcqMultiSelectedIds: next });
+                } else {
+                  patchAnswer({
+                    mcqSelectedId: answer?.mcqSelectedId === opt.id ? undefined : opt.id,
+                  });
+                }
+              }}
+              aria-label={`${question.code} - Phương án ${opt.label}`}
+              title={`${opt.label}. ${opt.text}`}
+              className={`pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 flex items-center justify-center transition-all ${
+                isMulti ? 'rounded-md' : 'rounded-md'
+              } ${
+                readOnly ? 'cursor-pointer' : 'cursor-pointer hover:scale-110'
+              } ${
+                checked
+                  ? 'bg-[#087F70] border-2 border-[#087F70] text-white shadow-xs'
+                  : isCorrectKey
+                    ? 'bg-emerald-100/90 border-2 border-emerald-600 text-emerald-800'
+                    : mode === 'author'
+                      ? selected
+                        ? 'bg-teal-50/70 border-2 border-[#087F70] text-[#087F70]'
+                        : 'bg-teal-50/40 border border-dashed border-[#087F70] text-[#164E63]'
+                      : 'bg-white/35 border-2 border-[#164E63]/65 hover:border-[#087F70] hover:bg-teal-50/50 text-transparent'
+              }`}
+            >
+              {checked ? (
+                <Check className="w-4 h-4 stroke-[3]" />
+              ) : isCorrectKey ? (
+                <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+              ) : mode === 'author' ? (
+                <span className="text-[11px] font-bold">{opt.label}</span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  const canRenderAnchoredTf =
+    question.overlayMode === 'anchored' &&
+    question.type === 'tf' &&
+    (question.tfStatements?.length || 0) >= 2 &&
+    question.tfStatements!.every((st) => Boolean(st.rowAnchor));
+
+  if (canRenderAnchoredTf) {
+    const stmts = question.tfStatements || [];
+    const btnSize = Math.max(24, Math.round(24 * zoom));
+    return (
+      <div
+        data-question-id={question.id}
+        className="absolute inset-0 pointer-events-none z-20"
+      >
+        {mode === 'author' && (
+          <div
+            style={{
+              left: `${Math.min(cssPageW - 185, Math.max(8, (resolvedX + resolvedW - 180) * zoom))}px`,
+              top: `${Math.max(4, resolvedY * zoom - 4)}px`,
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect?.();
+            }}
+            className={`pointer-events-auto absolute inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[12.5px] font-bold shadow-2xs cursor-pointer ${
+              selected
+                ? 'bg-[#087F70] border-[#087F70] text-white'
+                : 'bg-white/92 border-[#087F70]/70 text-[#164E63] hover:bg-teal-50'
+            }`}
+          >
+            <span>{question.code} · Đúng / Sai</span>
+            {onDeleteQuestion && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteQuestion();
+                }}
+                className="p-0.5 rounded hover:bg-red-100 hover:text-red-700 cursor-pointer"
+                title="Xóa câu hỏi này"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        )}
+
+        {stmts.map((st) => {
+          const ra = st.rowAnchor!;
+          const curVal = answer?.tfAnswers?.[st.id];
+          const keyVal = mode === 'grade' ? teacherKey?.tfCorrectMap?.[st.id] : undefined;
+          const cy = ra.ny * cssPageH;
+
+          return (
+            <React.Fragment key={st.id}>
+              {(
+                [
+                  { val: 'T' as const, label: 'Đ', nx: ra.trueNx },
+                  { val: 'F' as const, label: 'S', nx: ra.falseNx },
+                ] as const
+              ).map((col) => {
+                const active = curVal === col.val;
+                const isKey = keyVal === col.val;
+                return (
+                  <button
+                    key={col.val}
+                    type="button"
+                    style={{
+                      left: `${col.nx * cssPageW}px`,
+                      top: `${cy}px`,
+                      width: `${btnSize}px`,
+                      height: `${btnSize}px`,
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (mode === 'author' || mode === 'grade') {
+                        onSelect?.();
+                        return;
+                      }
+                      const nextMap = { ...(answer?.tfAnswers || {}) };
+                      if (nextMap[st.id] === col.val) {
+                        delete nextMap[st.id];
+                      } else {
+                        nextMap[st.id] = col.val;
+                      }
+                      patchAnswer({ tfAnswers: nextMap });
+                    }}
+                    title={`${st.label} ${col.val === 'T' ? 'Đúng' : 'Sai'}`}
+                    className={`pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 rounded-md flex items-center justify-center text-[12px] font-black transition-all cursor-pointer ${
+                      active
+                        ? 'bg-[#087F70] border-2 border-[#087F70] text-white shadow-xs'
+                        : isKey
+                          ? 'bg-emerald-100 border-2 border-emerald-600 text-emerald-800'
+                          : mode === 'author'
+                            ? 'bg-teal-50/55 border border-dashed border-[#087F70] text-[#164E63]'
+                            : 'bg-white/45 border border-[#164E63]/55 hover:border-[#087F70] hover:bg-teal-50/70 text-[#164E63]'
+                    }`}
+                  >
+                    {active ? '✓' : col.label}
+                  </button>
+                );
+              })}
+            </React.Fragment>
+          );
+        })}
+      </div>
+    );
+  }
+
+  const canRenderAnchoredMatching =
+    question.overlayMode === 'anchored' &&
+    question.type === 'matching' &&
+    question.matching?.mode === 'line' &&
+    (question.matching.itemsA?.length || 0) >= 2 &&
+    (question.matching.itemsB?.length || 0) >= 2 &&
+    question.matching.itemsA.every((a) => Boolean(a.anchor)) &&
+    question.matching.itemsB.every((b) => Boolean(b.anchor));
+
+  if (canRenderAnchoredMatching && question.matching) {
+    const itemsA = question.matching.itemsA;
+    const itemsB = question.matching.itemsB;
+    const pairs = answer?.matchingPairs || [];
+    const allowMany = Boolean(question.matching.allowManyToOne);
+    const keySet =
+      mode === 'grade' && teacherKey?.matchingCorrectPairs
+        ? new Set(teacherKey.matchingCorrectPairs.map((p) => `${p.fromId}->${p.toId}`))
+        : null;
+    const matchPalette = ['#087F70', '#164E63', '#2563EB', '#D97706', '#7C3AED', '#DC2626'];
+    const portR = Math.max(9, Math.round(9 * zoom));
+
+    const connectPair = (fromId: string, toId: string) => {
+      if (readOnly) return;
+      const filtered = allowMany
+        ? pairs.filter((p) => !(p.fromId === fromId && p.toId === toId))
+        : pairs.filter((p) => p.fromId !== fromId && p.toId !== toId);
+      patchAnswer({ matchingPairs: [...filtered, { fromId, toId }] });
+      setSelectedMatchAId(null);
+    };
+
+    const removePair = (fromId: string, toId: string) => {
+      if (readOnly) return;
+      patchAnswer({
+        matchingPairs: pairs.filter((p) => !(p.fromId === fromId && p.toId === toId)),
+      });
+    };
+
+    const startAnchoredDrag = (e: React.PointerEvent, fromId: string, x1: number, y1: number) => {
+      if (readOnly) return;
+      e.stopPropagation();
+      setSelectedMatchAId(fromId);
+      setDragMatchLine({ fromId, x1, y1, x2: x1, y2: y1 });
+
+      const onMove = (ev: PointerEvent) => {
+        const rect = anchoredOverlayRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        setDragMatchLine((prev) =>
+          prev
+            ? {
+                ...prev,
+                x2: ev.clientX - rect.left,
+                y2: ev.clientY - rect.top,
+              }
+            : null
+        );
+      };
+
+      const onUp = (ev: PointerEvent) => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        const rect = anchoredOverlayRef.current?.getBoundingClientRect();
+        setDragMatchLine(null);
+        if (!rect) return;
+        const dropX = ev.clientX - rect.left;
+        const dropY = ev.clientY - rect.top;
+        // Hit-test nearest right-side port within generous radius
+        let bestB: string | null = null;
+        let bestDist = Math.max(36, 36 * zoom);
+        for (const itemB of itemsB) {
+          const bx = itemB.anchor!.nx * cssPageW;
+          const by = itemB.anchor!.ny * cssPageH;
+          const d = Math.hypot(dropX - bx, dropY - by);
+          if (d < bestDist) {
+            bestDist = d;
+            bestB = itemB.id;
+          }
+        }
+        if (bestB) {
+          connectPair(fromId, bestB);
+        }
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    };
+
+    return (
+      <div
+        ref={anchoredOverlayRef}
+        data-question-id={question.id}
+        className="absolute inset-0 pointer-events-none z-20"
+      >
+        {/* Transparent SVG Vector Connector Lines (Zoom-invariant PDF coordinates) */}
+        <svg
+          width={cssPageW}
+          height={cssPageH}
+          viewBox={`0 0 ${cssPageW} ${cssPageH}`}
+          className="absolute inset-0 pointer-events-none"
+        >
+          {pairs.map((pair, idx) => {
+            const itemA = itemsA.find((a) => a.id === pair.fromId);
+            const itemB = itemsB.find((b) => b.id === pair.toId);
+            if (!itemA?.anchor || !itemB?.anchor) return null;
+            const x1 = itemA.anchor.nx * cssPageW;
+            const y1 = itemA.anchor.ny * cssPageH;
+            const x2 = itemB.anchor.nx * cssPageW;
+            const y2 = itemB.anchor.ny * cssPageH;
+            const isCorrect = keySet ? keySet.has(`${pair.fromId}->${pair.toId}`) : null;
+            const strokeColor =
+              isCorrect === true
+                ? '#15803D'
+                : isCorrect === false
+                  ? '#DC2626'
+                  : matchPalette[idx % matchPalette.length];
+            return (
+              <g key={`${pair.fromId}-${pair.toId}`}>
+                <line
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  stroke={strokeColor}
+                  strokeWidth={Math.max(2.6, 2.8 * zoom)}
+                  strokeLinecap="round"
+                />
+                {!readOnly && (
+                  <line
+                    x1={x1}
+                    y1={y1}
+                    x2={x2}
+                    y2={y2}
+                    stroke="transparent"
+                    strokeWidth={14}
+                    className="pointer-events-auto cursor-pointer"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      removePair(pair.fromId, pair.toId);
+                    }}
+                  >
+                    <title>Nhấn vào đường nối để xóa</title>
+                  </line>
+                )}
+              </g>
+            );
+          })}
+
+          {dragMatchLine && (
+            <line
+              x1={dragMatchLine.x1}
+              y1={dragMatchLine.y1}
+              x2={dragMatchLine.x2}
+              y2={dragMatchLine.y2}
+              stroke="#087F70"
+              strokeWidth={Math.max(2.4, 2.6 * zoom)}
+              strokeDasharray="6 4"
+              strokeLinecap="round"
+            />
+          )}
+        </svg>
+
+        {/* Author badge OR Student compact Reset button (only when connections exist) */}
+        {mode === 'author' ? (
+          <div
+            style={{
+              left: `${Math.min(cssPageW - 195, Math.max(8, (resolvedX + resolvedW - 190) * zoom))}px`,
+              top: `${Math.max(4, resolvedY * zoom - 4)}px`,
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect?.();
+            }}
+            className={`pointer-events-auto absolute inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[12.5px] font-bold shadow-2xs cursor-pointer ${
+              selected
+                ? 'bg-[#087F70] border-[#087F70] text-white'
+                : 'bg-white/92 border-[#087F70]/70 text-[#164E63] hover:bg-teal-50'
+            }`}
+          >
+            <span>{question.code} · Ghép đôi trực tiếp</span>
+            {onDeleteQuestion && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteQuestion();
+                }}
+                className="p-0.5 rounded hover:bg-red-100 hover:text-red-700 cursor-pointer"
+                title="Xóa câu hỏi này"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        ) : (
+          mode === 'solve' &&
+          pairs.length > 0 && (
+            <button
+              type="button"
+              style={{
+                left: `${Math.min(cssPageW - 95, Math.max(8, (resolvedX + resolvedW - 90) * zoom))}px`,
+                top: `${Math.max(4, resolvedY * zoom - 4)}px`,
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                patchAnswer({ matchingPairs: [] });
+                setSelectedMatchAId(null);
+              }}
+              className="pointer-events-auto absolute inline-flex items-center gap-1 rounded-lg bg-white/95 border border-slate-300 hover:border-red-400 hover:text-red-700 px-2 py-0.5 text-[12px] font-bold text-slate-700 shadow-2xs cursor-pointer"
+              title="Xóa các đường nối của câu này để nối lại"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Làm lại</span>
+            </button>
+          )
+        )}
+
+        {/* Left column interactive ports (A) */}
+        {itemsA.map((itemA, idx) => {
+          const cx = itemA.anchor!.nx * cssPageW;
+          const cy = itemA.anchor!.ny * cssPageH;
+          const isSelectedA = selectedMatchAId === itemA.id;
+          const isConnected = pairs.some((p) => p.fromId === itemA.id);
+          return (
+            <button
+              key={itemA.id}
+              type="button"
+              style={{
+                left: `${cx}px`,
+                top: `${cy}px`,
+                width: `${portR * 2}px`,
+                height: `${portR * 2}px`,
+              }}
+              onPointerDown={(ev) => {
+                if (mode === 'solve') startAnchoredDrag(ev, itemA.id, cx, cy);
+              }}
+              onClick={(ev) => {
+                ev.stopPropagation();
+                if (mode === 'author' || mode === 'grade') {
+                  onSelect?.();
+                  return;
+                }
+                setSelectedMatchAId((prev) => (prev === itemA.id ? null : itemA.id));
+              }}
+              title={`Kéo hoặc nhấn từ mục ${idx + 1} sang cột phải để nối`}
+              className={`pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 flex items-center justify-center text-[10px] font-black transition-transform cursor-pointer ${
+                isSelectedA
+                  ? 'bg-[#087F70] border-white text-white ring-4 ring-teal-300/70 scale-125'
+                  : isConnected
+                    ? 'bg-[#087F70] border-white text-white shadow-xs'
+                    : 'bg-white border-[#087F70] text-[#087F70] hover:scale-115 shadow-2xs'
+              }`}
+            >
+              {idx + 1}
+            </button>
+          );
+        })}
+
+        {/* Right column interactive ports (B) */}
+        {itemsB.map((itemB, idx) => {
+          const cx = itemB.anchor!.nx * cssPageW;
+          const cy = itemB.anchor!.ny * cssPageH;
+          const isConnected = pairs.some((p) => p.toId === itemB.id);
+          const letter = String.fromCharCode(65 + idx);
+          return (
+            <button
+              key={itemB.id}
+              type="button"
+              style={{
+                left: `${cx}px`,
+                top: `${cy}px`,
+                width: `${portR * 2}px`,
+                height: `${portR * 2}px`,
+              }}
+              onClick={(ev) => {
+                ev.stopPropagation();
+                if (mode === 'author' || mode === 'grade') {
+                  onSelect?.();
+                  return;
+                }
+                if (selectedMatchAId) {
+                  connectPair(selectedMatchAId, itemB.id);
+                }
+              }}
+              title={
+                selectedMatchAId
+                  ? `Nhấn để nối vào mục ${letter}`
+                  : `Điểm nối ${letter} (chọn điểm bên trái trước hoặc kéo đường nối tới đây)`
+              }
+              className={`pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 flex items-center justify-center text-[10px] font-black transition-transform cursor-pointer ${
+                selectedMatchAId
+                  ? 'bg-teal-50 border-[#087F70] text-[#164E63] ring-2 ring-teal-200 hover:scale-125'
+                  : isConnected
+                    ? 'bg-[#164E63] border-white text-white shadow-xs'
+                    : 'bg-white border-[#164E63] text-[#164E63] hover:scale-115 shadow-2xs'
+              }`}
+            >
+              {letter}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  const canRenderAnchoredFillBlank =
+    question.overlayMode === 'anchored' &&
+    question.type === 'fill_blank' &&
+    (question.fillBlanks?.length || 0) >= 1 &&
+    question.fillBlanks!.every((s) => Boolean(s.anchor));
+
+  if (canRenderAnchoredFillBlank) {
+    const slots = question.fillBlanks || [];
+    return (
+      <div
+        data-question-id={question.id}
+        className="absolute inset-0 pointer-events-none z-20"
+      >
+        {mode === 'author' && (
+          <div
+            style={{
+              left: `${Math.min(cssPageW - 180, Math.max(8, (resolvedX + resolvedW - 175) * zoom))}px`,
+              top: `${Math.max(4, resolvedY * zoom - 4)}px`,
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect?.();
+            }}
+            className={`pointer-events-auto absolute inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[12.5px] font-bold shadow-2xs cursor-pointer ${
+              selected
+                ? 'bg-[#087F70] border-[#087F70] text-white'
+                : 'bg-white/92 border-[#087F70]/70 text-[#164E63]'
+            }`}
+          >
+            <span>{question.code} · Điền chỗ trống</span>
+            {onDeleteQuestion && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteQuestion();
+                }}
+                className="p-0.5 rounded hover:bg-red-100 hover:text-red-700 cursor-pointer"
+                title="Xóa câu hỏi này"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        )}
+
+        {slots.map((slot) => {
+          const anc = slot.anchor!;
+          const left = anc.nx * cssPageW;
+          const top = anc.ny * cssPageH;
+          const w = Math.max(70, (anc.nw || 0.16) * cssPageW);
+          return (
+            <input
+              key={slot.id}
+              type="text"
+              readOnly={readOnly}
+              value={answer?.fillBlankAnswers?.[slot.id] || ''}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (mode === 'author' || mode === 'grade') onSelect?.();
+              }}
+              onChange={(e) =>
+                patchAnswer({
+                  fillBlankAnswers: {
+                    ...(answer?.fillBlankAnswers || {}),
+                    [slot.id]: e.target.value,
+                  },
+                })
+              }
+              placeholder={slot.placeholder || 'Nhập...'}
+              style={{
+                left: `${left}px`,
+                top: `${top}px`,
+                width: `${w}px`,
+                fontSize: `${Math.max(12, Math.round(13 * zoom))}px`,
+              }}
+              className="pointer-events-auto absolute -translate-y-1/2 rounded-sm border-b-2 border-[#087F70] bg-white/85 px-1.5 py-0.5 font-semibold text-[#164E63] outline-none focus:bg-white focus:ring-2 focus:ring-teal-200"
+            />
+          );
+        })}
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // CASE 4: STANDARD BOX OVERLAY (CLEAN STUDENT VIEW vs AUTHOR CONTROLS)
+  // ============================================================================
   const borderClass =
     mode === 'author'
       ? selected
         ? 'border-2 border-[#087F70] ring-2 ring-[#087F70]/25 bg-white/95 shadow-md z-30'
         : question.needsReview && !question.teacherApproved
-          ? 'border-2 border-dashed border-amber-500 bg-amber-50/40 hover:border-[#087F70] z-20'
-          : 'border border-dashed border-[#164E63]/70 bg-white/92 hover:border-[#087F70] z-20'
+          ? 'border-2 border-dashed border-amber-500 bg-amber-50/55 hover:border-[#087F70] z-20'
+          : 'border border-dashed border-[#164E63]/65 bg-white/82 hover:border-[#087F70] z-20'
       : mode === 'grade'
         ? selected
           ? 'border-2 border-[#DC2626] ring-2 ring-red-200 bg-white/97 shadow-md z-30'
           : 'border border-red-300 bg-white/94 z-20'
-        : 'border border-[#087F70]/60 bg-white/95 shadow-xs z-20 focus-within:border-[#087F70] focus-within:ring-2 focus-within:ring-[#087F70]/20';
+        : 'border border-[#087F70]/45 bg-white/90 shadow-2xs z-20 focus-within:border-[#087F70] focus-within:bg-white focus-within:ring-2 focus-within:ring-[#087F70]/20';
 
   return (
     <div
@@ -384,73 +1141,72 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
       }}
       className={`absolute rounded-xl overflow-hidden flex flex-col transition-shadow ${borderClass}`}
     >
-      {/* Top Bar */}
-      <div
-        onPointerDown={mode === 'author' ? startMove : undefined}
-        className={`px-3 py-1.5 flex items-center justify-between gap-2 text-[14.5px] font-semibold border-b ${
-          mode === 'author'
-            ? question.needsReview && !question.teacherApproved
-              ? 'bg-amber-100/95 text-amber-950 border-amber-300 cursor-move select-none'
-              : 'bg-[#E6F1EF] text-[#164E63] border-teal-200 cursor-move select-none'
-            : mode === 'grade'
-              ? 'bg-red-50 text-[#991B1B] border-red-200 cursor-pointer'
-              : 'bg-[#F4F8F7] text-[#164E63] border-slate-200'
-        }`}
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          {mode === 'author' && <GripVertical className="w-4 h-4 text-[#087F70] shrink-0" />}
-          <span className="truncate font-bold">
-            {question.code} · {QUESTION_TYPE_META[question.type].shortLabel}
-          </span>
-          {mode === 'author' && question.needsReview && !question.teacherApproved && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-600 text-white text-[12.5px] font-bold shrink-0">
-              <AlertCircle className="w-3.5 h-3.5" />
-              <span>Cần kiểm tra</span>
+      {/* Top Bar: Shown in Author/Grade mode; minimized or omitted for pure Essay/Short in Student Solve/Preview */}
+      {(mode !== 'solve' || (question.type !== 'essay' && question.type !== 'short' && question.type !== 'number')) && (
+        <div
+          onPointerDown={mode === 'author' ? startMove : undefined}
+          className={`px-2.5 py-1 flex items-center justify-between gap-2 text-[13.5px] font-semibold border-b ${
+            mode === 'author'
+              ? question.needsReview && !question.teacherApproved
+                ? 'bg-amber-100/90 text-amber-950 border-amber-300 cursor-move select-none'
+                : 'bg-[#E6F1EF]/95 text-[#164E63] border-teal-200 cursor-move select-none'
+              : mode === 'grade'
+                ? 'bg-red-50 text-[#991B1B] border-red-200 cursor-pointer'
+                : 'bg-[#F4F8F7]/90 text-[#164E63] border-slate-200/80'
+          }`}
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            {mode === 'author' && <GripVertical className="w-4 h-4 text-[#087F70] shrink-0" />}
+            <span className="truncate font-bold">
+              {mode === 'solve'
+                ? question.code
+                : `${question.code} · ${QUESTION_TYPE_META[question.type].shortLabel}`}
             </span>
-          )}
-          {mode === 'author' && question.teacherApproved && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-700 text-white text-[12.5px] font-bold shrink-0">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Đã kiểm tra</span>
-            </span>
-          )}
+            {mode === 'author' && question.needsReview && !question.teacherApproved && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-600 text-white text-[11.5px] font-bold shrink-0">
+                <AlertCircle className="w-3 h-3" />
+                <span>Cần kiểm tra</span>
+              </span>
+            )}
+            {mode === 'author' && question.teacherApproved && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-700 text-white text-[11.5px] font-bold shrink-0">
+                <CheckCircle2 className="w-3 h-3" />
+                <span>Đã kiểm tra</span>
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {mode === 'grade' && gradingDetail ? (
+              <span className="px-2 py-0.5 rounded bg-white border border-red-300 text-[#DC2626] font-bold text-[13px]">
+                {typeof gradingDetail.earnedPoints === 'number'
+                  ? `${gradingDetail.earnedPoints} / ${gradingDetail.maxPoints} điểm`
+                  : `Chưa chấm / ${gradingDetail.maxPoints} điểm`}
+              </span>
+            ) : mode === 'author' ? (
+              <span className="text-[12.5px] font-semibold text-slate-700">
+                {question.maxPoints}đ
+              </span>
+            ) : null}
+            {mode === 'author' && onDeleteQuestion && (
+              <button
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteQuestion();
+                }}
+                className="p-1 rounded hover:bg-red-100 text-slate-600 hover:text-red-700 cursor-pointer"
+                title="Xóa câu hỏi này"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {mode === 'grade' && gradingDetail ? (
-            <span className="px-2 py-0.5 rounded bg-white border border-red-300 text-[#DC2626] font-bold text-[13.5px]">
-              {typeof gradingDetail.earnedPoints === 'number'
-                ? `${gradingDetail.earnedPoints} / ${gradingDetail.maxPoints} điểm`
-                : `Chưa chấm / ${gradingDetail.maxPoints} điểm`}
-            </span>
-          ) : (
-            <span className="text-[13.5px] font-semibold text-slate-700">
-              {question.maxPoints} điểm
-            </span>
-          )}
-          {mode === 'author' && !selected && (
-            <span className="text-[12.5px] font-semibold text-[#087F70] hidden sm:inline">
-              Nhấn để sửa
-            </span>
-          )}
-          {mode === 'author' && onDeleteQuestion && (
-            <button
-              type="button"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                onDeleteQuestion();
-              }}
-              className="p-1 rounded hover:bg-red-100 text-slate-600 hover:text-red-700 cursor-pointer"
-              title="Xóa câu hỏi này"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-      </div>
+      )}
 
       {/* Question Body (All 14 Distinct Interactive Types) */}
-      <div className="p-2.5 flex-1 overflow-y-auto text-[14px] text-slate-800 space-y-2">
+      <div className="p-2 flex-1 overflow-y-auto text-[14px] text-slate-800 space-y-2">
         {/* 1. MCQ Single Choice */}
         {question.type === 'mcq' && (
           <div className="grid grid-cols-2 gap-1.5">

@@ -160,52 +160,74 @@ export async function computeIntegrityDigest(
  * Strips any accidental teacher-only keys from a worksheet before packaging for students.
  */
 export function sanitizeWorksheetForStudent(worksheet: InteractiveWorksheet): InteractiveWorksheet {
-  const cleanQuestions: InteractiveQuestion[] = worksheet.questions.map((q) => ({
-    id: q.id,
-    code: q.code,
-    title: q.title,
-    prompt: q.prompt,
-    type: q.type,
-    maxPoints: q.maxPoints,
-    required: q.required,
-    region: { ...q.region },
-    mcqOptions: q.mcqOptions ? q.mcqOptions.map((o) => ({ ...o })) : undefined,
-    tfStatements: q.tfStatements ? q.tfStatements.map((s) => ({ ...s })) : undefined,
-    shortPlaceholder: q.shortPlaceholder,
-    shortUnit: q.shortUnit,
-    numberUnit: q.numberUnit,
-    numberPlaceholder: q.numberPlaceholder,
-    fillBlanks: q.fillBlanks ? q.fillBlanks.map((b) => ({ ...b })) : undefined,
-    essayPlaceholder: q.essayPlaceholder,
-    matching: q.matching
-      ? {
-          mode: q.matching.mode,
-          allowManyToOne: q.matching.allowManyToOne,
-          shuffleB: q.matching.shuffleB,
-          practiceFeedback: worksheet.examMode === 'practice' ? Boolean(q.matching.practiceFeedback) : false,
-          columnATitle: q.matching.columnATitle,
-          columnBTitle: q.matching.columnBTitle,
-          itemsA: q.matching.itemsA.map((item) => ({ ...item })),
-          itemsB: q.matching.itemsB.map((item) => ({ ...item })),
-        }
-      : undefined,
-    orderingItems: q.orderingItems ? q.orderingItems.map((it) => ({ ...it })) : undefined,
-    readingPassage: q.readingPassage,
-    readingSubQuestions: q.readingSubQuestions
-      ? q.readingSubQuestions.map((sq) => ({
-          id: sq.id,
-          prompt: sq.prompt,
-          kind: sq.kind,
-          options: sq.options ? [...sq.options] : undefined,
-        }))
-      : undefined,
-    formulaPlaceholder: q.formulaPlaceholder,
-    diagramPins: q.diagramPins ? q.diagramPins.map((p) => ({ ...p })) : undefined,
-    attachmentAcceptHint: q.attachmentAcceptHint,
-    sourcePdfPageNumber: q.sourcePdfPageNumber,
-    printedPageLabel: q.printedPageLabel,
-    teacherApproved: q.teacherApproved,
-  }));
+  const cleanQuestions: InteractiveQuestion[] = worksheet.questions
+    .filter((q) => q.classificationStatus !== 'unclassified')
+    .map((q) => ({
+      id: q.id,
+      code: q.code,
+      title: q.title,
+      prompt: q.prompt,
+      type: q.type,
+      maxPoints: q.maxPoints,
+      required: q.required,
+      region: { ...q.region },
+      classificationStatus: q.classificationStatus || 'classified',
+      overlayMode: q.overlayMode,
+      subItems: q.subItems ? [...q.subItems] : undefined,
+      questionBounds: q.questionBounds ? { ...q.questionBounds } : undefined,
+      mcqOptions: q.mcqOptions
+        ? q.mcqOptions.map((o) => ({ ...o, anchor: o.anchor ? { ...o.anchor } : undefined }))
+        : undefined,
+      tfStatements: q.tfStatements
+        ? q.tfStatements.map((s) => ({
+            ...s,
+            rowAnchor: s.rowAnchor ? { ...s.rowAnchor } : undefined,
+          }))
+        : undefined,
+      shortPlaceholder: q.shortPlaceholder,
+      shortUnit: q.shortUnit,
+      numberUnit: q.numberUnit,
+      numberPlaceholder: q.numberPlaceholder,
+      fillBlanks: q.fillBlanks
+        ? q.fillBlanks.map((b) => ({ ...b, anchor: b.anchor ? { ...b.anchor } : undefined }))
+        : undefined,
+      essayPlaceholder: q.essayPlaceholder,
+      matching: q.matching
+        ? {
+            mode: q.matching.mode,
+            allowManyToOne: q.matching.allowManyToOne,
+            shuffleB: q.matching.shuffleB,
+            practiceFeedback:
+              worksheet.examMode === 'practice' ? Boolean(q.matching.practiceFeedback) : false,
+            columnATitle: q.matching.columnATitle,
+            columnBTitle: q.matching.columnBTitle,
+            itemsA: q.matching.itemsA.map((item) => ({
+              ...item,
+              anchor: item.anchor ? { ...item.anchor } : undefined,
+            })),
+            itemsB: q.matching.itemsB.map((item) => ({
+              ...item,
+              anchor: item.anchor ? { ...item.anchor } : undefined,
+            })),
+          }
+        : undefined,
+      orderingItems: q.orderingItems ? q.orderingItems.map((it) => ({ ...it })) : undefined,
+      readingPassage: q.readingPassage,
+      readingSubQuestions: q.readingSubQuestions
+        ? q.readingSubQuestions.map((sq) => ({
+            id: sq.id,
+            prompt: sq.prompt,
+            kind: sq.kind,
+            options: sq.options ? [...sq.options] : undefined,
+          }))
+        : undefined,
+      formulaPlaceholder: q.formulaPlaceholder,
+      diagramPins: q.diagramPins ? q.diagramPins.map((p) => ({ ...p })) : undefined,
+      attachmentAcceptHint: q.attachmentAcceptHint,
+      sourcePdfPageNumber: q.sourcePdfPageNumber,
+      printedPageLabel: q.printedPageLabel,
+      teacherApproved: q.teacherApproved,
+    }));
 
   return {
     worksheetId: worksheet.worksheetId,
@@ -1488,18 +1510,160 @@ export async function renderInteractiveAnswersToPdf(params: {
     }
   }
 
+  const drawerOverflowEntries: Array<{ code: string; prompt: string; text: string; gradeText?: string }> = [];
+
   for (const q of params.worksheet.questions) {
+    if (q.classificationStatus === 'unclassified') continue;
     const page = pages[q.region.pageIndex] || pages[0];
     if (!page) continue;
-    const { height: pageHeight } = page.getSize();
+    const { width: pageWidth, height: pageHeight } = page.getSize();
+    const ans = params.answers[q.id];
+    const grade = params.grading?.gradingDetails[q.id];
+
+    // ---- ANCHORED DIRECT-ON-PDF VISUAL RENDER (ZERO COVERING FRAMES!) ----
+    if (
+      q.overlayMode === 'anchored' &&
+      (q.type === 'mcq' || q.type === 'mcq_multi') &&
+      (q.mcqOptions?.length || 0) >= 2 &&
+      q.mcqOptions!.every((o) => Boolean(o.anchor))
+    ) {
+      const selectedSet = new Set(
+        q.type === 'mcq_multi'
+          ? ans?.mcqMultiSelectedIds || []
+          : ans?.mcqSelectedId
+            ? [ans.mcqSelectedId]
+            : []
+      );
+      for (const opt of q.mcqOptions!) {
+        if (!selectedSet.has(opt.id) || !opt.anchor) continue;
+        const cx = opt.anchor.nx * pageWidth;
+        const cy = pageHeight - opt.anchor.ny * pageHeight;
+        // Crisp vector checkmark directly inside/beside PDF's option checkbox
+        page.drawLine({
+          start: { x: cx - 5.5, y: cy - 0.5 },
+          end: { x: cx - 1.5, y: cy - 4.8 },
+          thickness: 2.1,
+          color: rgb(0.03, 0.5, 0.44),
+        });
+        page.drawLine({
+          start: { x: cx - 1.5, y: cy - 4.8 },
+          end: { x: cx + 6.5, y: cy + 5.5 },
+          thickness: 2.1,
+          color: rgb(0.03, 0.5, 0.44),
+        });
+      }
+      continue;
+    }
+
+    if (
+      q.overlayMode === 'anchored' &&
+      q.type === 'tf' &&
+      (q.tfStatements?.length || 0) >= 2 &&
+      q.tfStatements!.every((s) => Boolean(s.rowAnchor))
+    ) {
+      for (const st of q.tfStatements!) {
+        const val = ans?.tfAnswers?.[st.id];
+        if (!val || !st.rowAnchor) continue;
+        const cx = (val === 'T' ? st.rowAnchor.trueNx : st.rowAnchor.falseNx) * pageWidth;
+        const cy = pageHeight - st.rowAnchor.ny * pageHeight;
+        page.drawLine({
+          start: { x: cx - 5, y: cy - 0.5 },
+          end: { x: cx - 1.2, y: cy - 4.5 },
+          thickness: 2,
+          color: rgb(0.03, 0.5, 0.44),
+        });
+        page.drawLine({
+          start: { x: cx - 1.2, y: cy - 4.5 },
+          end: { x: cx + 6, y: cy + 5.2 },
+          thickness: 2,
+          color: rgb(0.03, 0.5, 0.44),
+        });
+      }
+      continue;
+    }
+
+    if (
+      q.overlayMode === 'anchored' &&
+      q.type === 'matching' &&
+      q.matching?.mode === 'line' &&
+      (q.matching.itemsA?.length || 0) >= 2 &&
+      (q.matching.itemsB?.length || 0) >= 2 &&
+      q.matching.itemsA.every((a) => Boolean(a.anchor)) &&
+      q.matching.itemsB.every((b) => Boolean(b.anchor))
+    ) {
+      const pairs: MatchingPair[] = ans?.matchingPairs || [];
+      const keyPairs = params.grading?.answerKeys?.[q.id]?.matchingCorrectPairs;
+      const keySet = keyPairs ? new Set(keyPairs.map((p) => `${p.fromId}->${p.toId}`)) : null;
+
+      pairs.forEach((pair, idx) => {
+        const itemA = q.matching!.itemsA.find((a) => a.id === pair.fromId);
+        const itemB = q.matching!.itemsB.find((b) => b.id === pair.toId);
+        if (!itemA?.anchor || !itemB?.anchor) return;
+        const x1 = itemA.anchor.nx * pageWidth;
+        const y1 = pageHeight - itemA.anchor.ny * pageHeight;
+        const x2 = itemB.anchor.nx * pageWidth;
+        const y2 = pageHeight - itemB.anchor.ny * pageHeight;
+        const isCorrect = keySet ? keySet.has(`${pair.fromId}->${pair.toId}`) : null;
+        const lineColor =
+          isCorrect === true
+            ? rgb(0.05, 0.58, 0.33)
+            : isCorrect === false
+              ? rgb(0.84, 0.15, 0.15)
+              : MATCH_LINE_COLORS[idx % MATCH_LINE_COLORS.length];
+        page.drawLine({
+          start: { x: x1, y: y1 },
+          end: { x: x2, y: y2 },
+          thickness: 1.9,
+          color: lineColor,
+        });
+        page.drawCircle({ x: x1, y: y1, size: 3.2, color: lineColor });
+        page.drawCircle({ x: x2, y: y2, size: 3.2, color: lineColor });
+      });
+      continue;
+    }
+
+    if (
+      q.overlayMode === 'anchored' &&
+      q.type === 'fill_blank' &&
+      (q.fillBlanks?.length || 0) >= 1 &&
+      q.fillBlanks!.every((s) => Boolean(s.anchor))
+    ) {
+      for (const slot of q.fillBlanks!) {
+        const val = (ans?.fillBlankAnswers?.[slot.id] || '').trim();
+        if (!val || !slot.anchor) continue;
+        const bx = slot.anchor.nx * pageWidth;
+        const by = pageHeight - slot.anchor.ny * pageHeight;
+        drawSafeLine(page, fonts.sansBold, val.slice(0, 48), bx + 2, by - 3, 9.2, rgb(0.03, 0.45, 0.39));
+      }
+      continue;
+    }
+
+    if (q.overlayMode === 'drawer_button') {
+      const content =
+        q.type === 'short'
+          ? (ans?.shortText || '').trim()
+          : (ans?.essayText || '').trim();
+      if (content) {
+        drawerOverflowEntries.push({
+          code: q.code,
+          prompt: q.prompt,
+          text: content,
+          gradeText: grade
+            ? typeof grade.earnedPoints === 'number'
+              ? `${grade.earnedPoints}/${grade.maxPoints}đ`
+              : `Chưa chấm / ${grade.maxPoints}đ`
+            : undefined,
+        });
+      }
+      continue;
+    }
+
     const rx = q.region.x;
     const rw = q.region.width;
     const rh = q.region.height;
     // Convert top-left PDF-point region to pdf-lib bottom-left coordinates
     const bottomY = Math.max(12, pageHeight - (q.region.y + rh));
     const topY = bottomY + rh;
-    const ans = params.answers[q.id];
-    const grade = params.grading?.gradingDetails[q.id];
 
     // Subtle answer frame
     page.drawRectangle({
@@ -2018,6 +2182,54 @@ export async function renderInteractiveAnswersToPdf(params: {
         opacity: 0.96,
       });
       drawSafeLine(page, fonts.sansBold, label.slice(0, 34), boxX + 6, boxBottom + 6.5, 8.6, col);
+    }
+  }
+
+  // Append a clean Answer Sheet page for drawer-button Essay / Short answers so PDF text is never covered
+  if (drawerOverflowEntries.length > 0) {
+    let sheetPage = pdfDoc.addPage([595, 842]);
+    let curY = 804;
+    drawSafeLine(
+      sheetPage,
+      fonts.sansBold,
+      'PHẦN BÀI LÀM TỰ LUẬN CỦA HỌC SINH',
+      36,
+      curY,
+      13,
+      rgb(0.09, 0.31, 0.39)
+    );
+    curY -= 18;
+    drawSafeLine(
+      sheetPage,
+      fonts.sans,
+      `Học sinh: ${params.student.studentName || 'Chưa ghi tên'}   |   Lớp: ${params.student.className || '—'}`,
+      36,
+      curY,
+      9.5,
+      rgb(0.25, 0.32, 0.38)
+    );
+    curY -= 22;
+
+    for (const entry of drawerOverflowEntries) {
+      if (curY < 96) {
+        sheetPage = pdfDoc.addPage([595, 842]);
+        curY = 804;
+      }
+      const header = entry.gradeText
+        ? `${entry.code} (${entry.gradeText})`
+        : entry.code;
+      drawSafeLine(sheetPage, fonts.sansBold, header, 36, curY, 10.5, rgb(0.03, 0.45, 0.39));
+      curY -= 14;
+      const lines = wrapTextLines(fonts.sans, entry.text, 9.5, 520);
+      for (const ln of lines) {
+        if (curY < 48) {
+          sheetPage = pdfDoc.addPage([595, 842]);
+          curY = 804;
+        }
+        drawSafeLine(sheetPage, fonts.sans, ln, 42, curY, 9.5, rgb(0.1, 0.16, 0.22));
+        curY -= 13.5;
+      }
+      curY -= 12;
     }
   }
 

@@ -105,6 +105,7 @@ const SinglePdfPageCanvas: React.FC<{
   onUpdateRegion?: (qId: string, patch: Partial<InteractiveQuestion['region']>) => void;
   onDeleteQuestion?: (qId: string) => void;
   onChangeAnswer?: (qId: string, next: StudentQuestionAnswer) => void;
+  onOpenAnswerDrawer?: (qId: string) => void;
 }> = ({
   handle,
   dim,
@@ -133,6 +134,7 @@ const SinglePdfPageCanvas: React.FC<{
   onUpdateRegion,
   onDeleteQuestion,
   onChangeAnswer,
+  onOpenAnswerDrawer,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pageContainerRef = useRef<HTMLDivElement>(null);
@@ -548,6 +550,7 @@ const SinglePdfPageCanvas: React.FC<{
               onUpdateRegion={(patch) => onUpdateRegion?.(q.id, patch)}
               onDeleteQuestion={() => onDeleteQuestion?.(q.id)}
               onChangeAnswer={(next) => onChangeAnswer?.(q.id, next)}
+              onOpenAnswerDrawer={onOpenAnswerDrawer}
             />
           ))}
         </div>
@@ -810,7 +813,12 @@ export const InteractivePdfCanvas: React.FC<InteractivePdfCanvasProps> = ({
   const [directMarkSymbol, setDirectMarkSymbol] = useState<'check' | 'cross' | 'circle'>('check');
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
   const [showDirectToolsOnInteractive, setShowDirectToolsOnInteractive] = useState(false);
+  const [activeDrawerQuestionId, setActiveDrawerQuestionId] = useState<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const activeDrawerQuestion = activeDrawerQuestionId
+    ? questions.find((q) => q.id === activeDrawerQuestionId) || null
+    : null;
 
   const isPlainMode = mode === 'solve' && questions.length === 0;
   const directToolbarVisible =
@@ -820,6 +828,7 @@ export const InteractivePdfCanvas: React.FC<InteractivePdfCanvasProps> = ({
   useEffect(() => {
     setDirectTool('select');
     setSelectedAnnotationId(null);
+    setActiveDrawerQuestionId(null);
   }, [pdfBytes]);
 
   // Auto-scroll smoothly to selected question when teacher clicks in Left Question List
@@ -1147,11 +1156,72 @@ export const InteractivePdfCanvas: React.FC<InteractivePdfCanvasProps> = ({
                 onUpdateRegion={onUpdateRegion}
                 onDeleteQuestion={onDeleteQuestion}
                 onChangeAnswer={onChangeAnswer}
+                onOpenAnswerDrawer={(qId) => setActiveDrawerQuestionId(qId)}
               />
             ))}
           </div>
         )}
       </div>
+
+      {/* Non-Blocking Docked Bottom Answer Writing Drawer (for drawer_button Essay / Short questions) */}
+      {mode === 'solve' && activeDrawerQuestion && onChangeAnswer && (
+        <div className="shrink-0 border-t-2 border-[#087F70] bg-white shadow-lg px-5 py-3.5 space-y-2.5 z-40">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <div className="text-[16px] font-bold text-[#164E63]">
+                {activeDrawerQuestion.code} — Viết câu trả lời
+              </div>
+              {activeDrawerQuestion.prompt && (
+                <div className="text-[14px] text-slate-600 truncate max-w-3xl">
+                  {activeDrawerQuestion.prompt}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveDrawerQuestionId(null)}
+              className="inline-flex items-center gap-1.5 px-4 min-h-[40px] rounded-xl bg-[#087F70] hover:bg-[#06695d] text-white font-bold text-[15px] cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+              <span>Xong · Đóng khung viết</span>
+            </button>
+          </div>
+
+          {activeDrawerQuestion.type === 'short' ? (
+            <input
+              type="text"
+              autoFocus
+              value={answers?.[activeDrawerQuestion.id]?.shortText || ''}
+              onChange={(e) =>
+                onChangeAnswer(activeDrawerQuestion.id, {
+                  questionId: activeDrawerQuestion.id,
+                  ...(answers?.[activeDrawerQuestion.id] || {}),
+                  shortText: e.target.value,
+                  updatedAt: Date.now(),
+                })
+              }
+              placeholder={activeDrawerQuestion.shortPlaceholder || 'Nhập câu trả lời ngắn của em...'}
+              className="w-full min-h-[46px] rounded-xl border-2 border-slate-300 focus:border-[#087F70] px-3.5 py-2 text-[16px] text-slate-900 outline-none"
+            />
+          ) : (
+            <textarea
+              rows={4}
+              autoFocus
+              value={answers?.[activeDrawerQuestion.id]?.essayText || ''}
+              onChange={(e) =>
+                onChangeAnswer(activeDrawerQuestion.id, {
+                  questionId: activeDrawerQuestion.id,
+                  ...(answers?.[activeDrawerQuestion.id] || {}),
+                  essayText: e.target.value,
+                  updatedAt: Date.now(),
+                })
+              }
+              placeholder={activeDrawerQuestion.essayPlaceholder || 'Nhập câu trả lời của em tại đây...'}
+              className="w-full rounded-xl border-2 border-slate-300 focus:border-[#087F70] px-3.5 py-2.5 text-[16px] text-slate-900 leading-relaxed outline-none resize-y"
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 };

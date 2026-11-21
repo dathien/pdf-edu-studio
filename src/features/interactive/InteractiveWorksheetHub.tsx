@@ -54,11 +54,13 @@ import {
 } from './interactiveEngine';
 import { interactiveStorage } from './interactiveStorage';
 import {
+  compareDetectionForRedetect,
   detectQuestionsFromPdfPages,
   extractSelectedPagesPdf,
   formatSelectedPagesVi,
   inspectPdfForPageSelection,
   validatePageSelectionSpec,
+  type RedetectComparisonResult,
 } from './pdfQuestionDetector';
 import {
   buildInteractiveSubjectTemplate,
@@ -312,6 +314,9 @@ function createDefaultQuestion(
     required: true,
     needsReview: false,
     teacherApproved: true,
+    teacherModified: true,
+    classificationStatus: 'classified',
+    overlayMode: 'box',
     sourcePdfPageNumber: sourcePdfPageNumber ?? pageIndex + 1,
     printedPageLabel,
     region: {
@@ -431,6 +436,12 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
   const [justSavedStudentPdfName, setJustSavedStudentPdfName] = useState<string | null>(null);
   const [authorPreviewStudent, setAuthorPreviewStudent] = useState(false);
   const [authorPreviewAnswers, setAuthorPreviewAnswers] = useState<StudentAnswerMap>({});
+  const [authorPreviewPlainAnnotations, setAuthorPreviewPlainAnnotations] = useState<PlainPdfAnnotation[]>([]);
+  const [pendingRedetect, setPendingRedetect] = useState<RedetectComparisonResult | null>(null);
+  const [redetectUndoSnapshot, setRedetectUndoSnapshot] = useState<{
+    questions: InteractiveQuestion[];
+    keys: TeacherAnswerKeyMap;
+  } | null>(null);
   const pageSpecInputRef = useRef<HTMLInputElement>(null);
 
   // ---- TAB 3: STUDENT SOLVING STATE ----
@@ -986,10 +997,11 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
     setAuthorActionAlert(null);
   };
 
-  const handleRunPdfQuestionDetection = async () => {
+  const handleRunPdfQuestionDetection = async (forceStageConfirm = false) => {
     if (!authorPdfBytes || !authorWorksheet) return;
     setDetectingQuestions(true);
     setAuthorActionAlert(null);
+    setPendingRedetect(null);
     try {
       const sourcePdfPages = authorWorksheet.pageMapping?.sourcePdfPages;
       const offset = sourcePdfPages ? computePrintedOffset(sourcePdfPages) : null;
@@ -997,6 +1009,23 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
         sourcePdfPages,
         printedPageOffset: offset,
       });
+
+      const hasExistingQuestions = authorWorksheet.questions.length > 0;
+      if (hasExistingQuestions || forceStageConfirm) {
+        // Safe Re-Detection: stage comparison first so teacher edits are preserved & duplicates are prevented!
+        const compared = compareDetectionForRedetect(
+          authorWorksheet.questions,
+          authorKeys,
+          result
+        );
+        setPendingRedetect(compared);
+        setDetectionNotes(result.notes);
+        notify(
+          `Đã phân tích xong (${result.totalDetectedCount} câu chính). Thầy cô hãy xem tóm tắt và xác nhận áp dụng.`,
+          'info'
+        );
+        return;
+      }
 
       const updatedMapping: WorksheetPageMapping = {
         sourcePdfPages: result.pageSummaries.map((s) => s.pdfPageNumber),
@@ -1019,17 +1048,22 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       setDetectionNotes(result.notes);
       setSelectedAuthorQId(null);
       setEditingQuestionSnapshot(null);
+      setRedetectUndoSnapshot(null);
 
-      if (result.questions.length > 0) {
+      if (result.totalDetectedCount > 0) {
         setAuthorStep(3);
+        const detail =
+          result.unclassifiedCount > 0
+            ? `${result.interactiveReadyCount} câu sẵn sàng · ${result.unclassifiedCount} câu chưa xác định dạng`
+            : `${result.interactiveReadyCount} câu tương tác sẵn sàng`;
         notify(
-          `Đã tìm thấy ${result.questions.length} câu hỏi. Thầy cô hãy kiểm tra trước khi giao bài.`,
+          `Nhận diện ${result.totalDetectedCount} câu hỏi chính (${detail}). Thầy cô hãy kiểm tra trước khi giao bài.`,
           'success'
         );
       } else {
         setShowAddQuestionMenu(true);
         notify(
-          'Ứng dụng chưa tìm được tất cả chỗ trả lời. Thầy cô có thể bổ sung bằng nút Thêm câu hỏi.',
+          'Ứng dụng chưa tìm thấy câu hỏi có lớp văn bản. Thầy cô có thể bổ sung trực tiếp bằng nút + Thêm câu hỏi.',
           'info'
         );
       }
@@ -1043,6 +1077,50 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
     } finally {
       setDetectingQuestions(false);
     }
+  };
+
+  const handleConfirmApplyRedetect = () => {
+    if (!authorWorksheet || !pendingRedetect) return;
+    // Save 1-click Undo snapshot before replacing unmodified auto regions
+    setRedetectUndoSnapshot({
+      questions: JSON.parse(JSON.stringify(authorWorksheet.questions)) as InteractiveQuestion[],
+      keys: JSON.parse(JSON.stringify(authorKeys)) as TeacherAnswerKeyMap,
+    });
+    const sourcePdfPages = authorWorksheet.pageMapping?.sourcePdfPages;
+    const offset = sourcePdfPages ? computePrintedOffset(sourcePdfPages) : null;
+    setAuthorWorksheet({
+      ...authorWorksheet,
+      pageMapping: {
+        sourcePdfPages: pendingRedetect.pageSummaries.map((s) => s.pdfPageNumber),
+        printedPageLabels: pendingRedetect.pageSummaries.map((s) => s.printedPageLabel || ''),
+        printedPageOffset: offset,
+        lessonTitle: pendingRedetect.lessonTitle || authorWorksheet.pageMapping?.lessonTitle,
+      },
+      questions: pendingRedetect.mergedQuestions,
+      updatedAt: Date.now(),
+    });
+    setAuthorKeys(pendingRedetect.mergedKeys);
+    setSelectedAuthorQId(null);
+    setEditingQuestionSnapshot(null);
+    setPendingRedetect(null);
+    setAuthorStep(3);
+    notify(
+      `Đã áp dụng nhận diện lại (${pendingRedetect.totalDetectedCount} câu · giữ nguyên ${pendingRedetect.preservedManualCount} câu thầy cô đã sửa).`,
+      'success'
+    );
+  };
+
+  const handleUndoRedetect = () => {
+    if (!authorWorksheet || !redetectUndoSnapshot) return;
+    setAuthorWorksheet({
+      ...authorWorksheet,
+      questions: redetectUndoSnapshot.questions,
+      updatedAt: Date.now(),
+    });
+    setAuthorKeys(redetectUndoSnapshot.keys);
+    setRedetectUndoSnapshot(null);
+    setSelectedAuthorQId(null);
+    notify('Đã hoàn tác về danh sách câu hỏi trước khi nhận diện lại.', 'info');
   };
 
   const handlePlaceQuestionAtPoint = (pageIndex: number, pdfX: number, pdfY: number) => {
@@ -1083,19 +1161,39 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
     setAuthorWorksheet({
       ...authorWorksheet,
       updatedAt: Date.now(),
-      questions: authorWorksheet.questions.map((q) => (q.id === qId ? { ...q, ...patch } : q)),
+      questions: authorWorksheet.questions.map((q) =>
+        q.id === qId
+          ? {
+              ...q,
+              ...patch,
+              teacherModified: patch.teacherModified ?? true,
+            }
+          : q
+      ),
     });
   };
 
   const handleChangeAuthorQuestionType = (qId: string, nextType: InteractiveQuestionType) => {
     if (!authorWorksheet) return;
     const existing = authorWorksheet.questions.find((q) => q.id === qId);
-    if (!existing || existing.type === nextType) return;
+    if (!existing) return;
+    if (existing.type === nextType && existing.classificationStatus !== 'unclassified') return;
     const { question: converted, key: freshKey } = populateTypeDefaults(existing, nextType);
+    const finalized: InteractiveQuestion = {
+      ...converted,
+      teacherModified: true,
+      classificationStatus: 'classified',
+      overlayMode:
+        nextType === 'essay' || nextType === 'short'
+          ? existing.overlayMode === 'drawer_button'
+            ? 'drawer_button'
+            : 'box'
+          : 'box',
+    };
     setAuthorWorksheet({
       ...authorWorksheet,
       updatedAt: Date.now(),
-      questions: authorWorksheet.questions.map((q) => (q.id === qId ? converted : q)),
+      questions: authorWorksheet.questions.map((q) => (q.id === qId ? finalized : q)),
     });
     setAuthorKeys((prev) => ({
       ...prev,
@@ -1198,17 +1296,27 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
 
   const handleExportStudentPackage = async () => {
     if (!authorWorksheet || !authorPdfBytes) return;
-    if (authorWorksheet.questions.length === 0) {
+    const readyQuestions = authorWorksheet.questions.filter(
+      (q) => q.classificationStatus !== 'unclassified'
+    );
+    if (readyQuestions.length === 0) {
       setAuthorActionAlert({
-        title: 'Chưa có câu hỏi để lưu bài tập',
-        detail: 'Thầy cô cần tạo ít nhất 1 câu hỏi trước khi lưu tệp PDF gửi cho học sinh.',
-        actionLabel: 'Tạo bài tập tự động ngay',
+        title: 'Chưa có câu hỏi tương tác sẵn sàng để lưu',
+        detail:
+          authorWorksheet.questions.length > 0
+            ? 'Các câu hỏi hiện tại đang ở trạng thái "Chưa xác định dạng". Thầy cô hãy nhấn vào từng câu để chọn đúng dạng câu hỏi trước khi lưu PDF gửi học sinh.'
+            : 'Thầy cô cần tạo ít nhất 1 câu hỏi trước khi lưu tệp PDF gửi cho học sinh.',
+        actionLabel: authorWorksheet.questions.length > 0 ? 'Sửa câu đầu tiên ngay' : 'Tạo bài tập tự động ngay',
         onAction: () => {
-          setAuthorStep(2);
+          if (authorWorksheet.questions.length > 0) {
+            openQuestionForEdit(authorWorksheet.questions[0].id);
+          } else {
+            setAuthorStep(2);
+          }
           setAuthorActionAlert(null);
         },
       });
-      notify('Chưa có câu hỏi để giao. Thầy cô hãy tạo bài tập trước.', 'warning');
+      notify('Chưa có câu hỏi đã phân loại để giao cho học sinh.', 'warning');
       return;
     }
     try {
@@ -1221,8 +1329,11 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
       triggerInteractiveDownload(bytes, fileName, 'application/pdf');
       setJustSavedStudentPdfName(fileName);
       setAuthorActionAlert(null);
+      const skippedUnclassified = authorWorksheet.questions.length - readyQuestions.length;
       notify(
-        `Đã lưu tệp "${fileName}" về máy (đã tách sạch đáp án giáo viên). Thầy cô có thể gửi tệp này qua Zalo cho học sinh.`,
+        skippedUnclassified > 0
+          ? `Đã lưu tệp "${fileName}" (${readyQuestions.length} câu hỏi sẵn sàng; tự bỏ qua ${skippedUnclassified} câu chưa xác định dạng).`
+          : `Đã lưu tệp "${fileName}" về máy (đã tách sạch đáp án giáo viên). Thầy cô có thể gửi tệp này qua Zalo cho học sinh.`,
         'success'
       );
     } catch (err) {
@@ -2454,7 +2565,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                         <button
                           type="button"
                           disabled={detectingQuestions || !authorPdfBytes}
-                          onClick={handleRunPdfQuestionDetection}
+                          onClick={() => handleRunPdfQuestionDetection(false)}
                           className="w-full inline-flex items-center justify-center gap-2.5 min-h-[56px] px-4 rounded-xl bg-[#087F70] hover:bg-[#06695d] disabled:opacity-55 text-white font-bold text-[17px] cursor-pointer shadow-sm"
                         >
                           {detectingQuestions ? (
@@ -2465,10 +2576,54 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                           ) : (
                             <>
                               <Sparkles className="w-6 h-6" />
-                              <span>TẠO BÀI TẬP TỰ ĐỘNG</span>
+                              <span>
+                                {authorWorksheet.questions.length > 0
+                                  ? 'NHẬN DIỆN LẠI (AN TOÀN)'
+                                  : 'TẠO BÀI TẬP TỰ ĐỘNG'}
+                              </span>
                             </>
                           )}
                         </button>
+
+                        {/* Safe Re-Detection Staging Preview Card */}
+                        {pendingRedetect && (
+                          <div className="rounded-xl bg-teal-50 border-2 border-[#087F70] p-4 space-y-3 text-[15px] text-[#164E63]">
+                            <div className="font-bold text-[16.5px]">
+                              Xem trước kết quả nhận diện lại (không gây trùng lặp)
+                            </div>
+                            <ul className="space-y-1 text-[14.5px] text-slate-800">
+                              <li>
+                                • Tổng sau khi gộp: <strong>{pendingRedetect.totalDetectedCount} câu</strong> ({pendingRedetect.interactiveReadyCount} câu tương tác sẵn sàng
+                                {pendingRedetect.unclassifiedCount > 0
+                                  ? `, ${pendingRedetect.unclassifiedCount} câu chưa xác định dạng`
+                                  : ''}
+                                )
+                              </li>
+                              <li>
+                                • Giữ nguyên vùng thầy cô đã sửa/duyệt: <strong>{pendingRedetect.preservedManualCount} câu</strong>
+                              </li>
+                              <li>
+                                • Thay thế vùng nhận diện cũ: <strong>{pendingRedetect.replacedAutoCount} câu</strong> · Bỏ qua trùng lặp: <strong>{pendingRedetect.skippedDuplicateCount}</strong>
+                              </li>
+                            </ul>
+                            <div className="grid grid-cols-2 gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={handleConfirmApplyRedetect}
+                                className="min-h-[44px] px-3 rounded-xl bg-[#087F70] hover:bg-[#06695d] text-white font-bold text-[15px] cursor-pointer"
+                              >
+                                Áp dụng kết quả mới
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPendingRedetect(null)}
+                                className="min-h-[44px] px-3 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-bold text-[15px] cursor-pointer"
+                              >
+                                Giữ nguyên hiện tại
+                              </button>
+                            </div>
+                          </div>
+                        )}
 
                         {detectingQuestions && (
                           <div className="rounded-xl bg-teal-50 border border-teal-200 p-4 text-[16px] text-[#164E63] font-medium">
@@ -2690,19 +2845,109 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                         {/* Question Review List */}
                         <div className="pt-3 border-t border-slate-200 space-y-3">
                           <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <div className="text-[17px] font-bold text-[#164E63] flex items-center gap-2">
-                              <ListChecks className="w-5 h-5 text-[#087F70]" />
-                              <span>Danh sách câu hỏi ({authorReviewStats.total})</span>
+                            <div className="space-y-0.5">
+                              <div className="text-[17px] font-bold text-[#164E63] flex items-center gap-2">
+                                <ListChecks className="w-5 h-5 text-[#087F70]" />
+                                <span>Danh sách câu hỏi ({authorReviewStats.total})</span>
+                              </div>
+                              {authorWorksheet.questions.length > 0 && (
+                                <div className="text-[13.5px] font-semibold text-slate-600">
+                                  {
+                                    authorWorksheet.questions.filter(
+                                      (q) => q.classificationStatus !== 'unclassified'
+                                    ).length
+                                  }{' '}
+                                  câu sẵn sàng
+                                  {authorWorksheet.questions.some(
+                                    (q) => q.classificationStatus === 'unclassified'
+                                  )
+                                    ? ` · ${
+                                        authorWorksheet.questions.filter(
+                                          (q) => q.classificationStatus === 'unclassified'
+                                        ).length
+                                      } câu chưa xác định dạng`
+                                    : ''}
+                                </div>
+                              )}
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => setShowAddQuestionMenu((v) => !v)}
-                              className="inline-flex items-center gap-1.5 px-3 min-h-[40px] rounded-xl border border-[#087F70] bg-teal-50 hover:bg-teal-100 text-[#164E63] font-bold text-[14.5px] cursor-pointer"
-                            >
-                              <Plus className="w-4 h-4" />
-                              <span>Thêm câu hỏi</span>
-                            </button>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <button
+                                type="button"
+                                disabled={detectingQuestions}
+                                onClick={() => handleRunPdfQuestionDetection(true)}
+                                className="inline-flex items-center gap-1 px-2.5 min-h-[40px] rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-[#164E63] font-bold text-[14px] cursor-pointer"
+                                title="Quét nhận diện lại mà vẫn giữ nguyên các câu thầy cô đã chỉnh sửa"
+                              >
+                                <Sparkles className="w-4 h-4 text-[#087F70]" />
+                                <span>Nhận diện lại</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setShowAddQuestionMenu((v) => !v)}
+                                className="inline-flex items-center gap-1.5 px-3 min-h-[40px] rounded-xl border border-[#087F70] bg-teal-50 hover:bg-teal-100 text-[#164E63] font-bold text-[14.5px] cursor-pointer"
+                              >
+                                <Plus className="w-4 h-4" />
+                                <span>Thêm câu hỏi</span>
+                              </button>
+                            </div>
                           </div>
+
+                          {/* Safe Re-Detection Staging Preview inside Step 3 */}
+                          {pendingRedetect && (
+                            <div className="rounded-xl bg-teal-50 border-2 border-[#087F70] p-3.5 space-y-2.5 text-[14.5px] text-[#164E63]">
+                              <div className="font-bold text-[15.5px]">
+                                Xác nhận nhận diện lại an toàn
+                              </div>
+                              <div className="text-slate-800 space-y-0.5">
+                                <div>
+                                  • Giữ nguyên: <strong>{pendingRedetect.preservedManualCount} câu</strong> đã chỉnh sửa/duyệt
+                                </div>
+                                <div>
+                                  • Thay thế tự động cũ: <strong>{pendingRedetect.replacedAutoCount} câu</strong> · Bỏ qua trùng: <strong>{pendingRedetect.skippedDuplicateCount}</strong>
+                                </div>
+                                <div>
+                                  • Kết quả sau gộp: <strong>{pendingRedetect.totalDetectedCount} câu</strong> ({pendingRedetect.interactiveReadyCount} sẵn sàng
+                                  {pendingRedetect.unclassifiedCount > 0
+                                    ? ` · ${pendingRedetect.unclassifiedCount} chưa xác định`
+                                    : ''}
+                                  )
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={handleConfirmApplyRedetect}
+                                  className="min-h-[40px] px-3 rounded-lg bg-[#087F70] hover:bg-[#06695d] text-white font-bold text-[14.5px] cursor-pointer"
+                                >
+                                  Áp dụng
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setPendingRedetect(null)}
+                                  className="min-h-[40px] px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-bold text-[14.5px] cursor-pointer"
+                                >
+                                  Hủy
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 1-Click Undo Re-Detection Banner */}
+                          {redetectUndoSnapshot && !pendingRedetect && (
+                            <div className="rounded-xl bg-slate-50 border border-slate-300 px-3 py-2 flex items-center justify-between gap-2 text-[14px]">
+                              <span className="text-slate-700 font-medium">
+                                Đã cập nhật từ lần nhận diện lại vừa rồi.
+                              </span>
+                              <button
+                                type="button"
+                                onClick={handleUndoRedetect}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-[#164E63] font-bold cursor-pointer shrink-0"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                                <span>Hoàn tác</span>
+                              </button>
+                            </div>
+                          )}
 
                           {showAddQuestionMenu && (
                             <div className="rounded-xl border border-slate-200 bg-[#F8FBFA] p-3 space-y-2">
@@ -2769,31 +3014,45 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                           ) : (
                             <div className="space-y-2">
                               {authorWorksheet.questions.map((q) => {
-                                const needsCheck = !q.teacherApproved;
+                                const isUnclassified = q.classificationStatus === 'unclassified';
+                                const needsCheck = !q.teacherApproved || isUnclassified;
                                 return (
                                   <button
                                     key={q.id}
                                     type="button"
                                     onClick={() => openQuestionForEdit(q.id)}
                                     className={`w-full text-left rounded-xl border p-3.5 transition-colors cursor-pointer space-y-1.5 ${
-                                      needsCheck
-                                        ? 'border-amber-300 bg-amber-50/40 hover:border-amber-500'
-                                        : 'border-slate-200 bg-white hover:border-[#087F70]'
+                                      isUnclassified
+                                        ? 'border-amber-400 bg-amber-50/75 hover:border-amber-600'
+                                        : needsCheck
+                                          ? 'border-amber-300 bg-amber-50/40 hover:border-amber-500'
+                                          : 'border-slate-200 bg-white hover:border-[#087F70]'
                                     }`}
                                   >
                                     <div className="flex items-center justify-between gap-2">
                                       <span className="font-bold text-[16px] text-[#164E63] truncate">
-                                        {q.code} · {QUESTION_TYPE_META[q.type].shortLabel}
+                                        {q.code} ·{' '}
+                                        {isUnclassified
+                                          ? 'Chưa xác định dạng'
+                                          : QUESTION_TYPE_META[q.type].shortLabel}
                                       </span>
                                       <span className="text-[15px] font-bold text-slate-700 shrink-0">
                                         {q.maxPoints} điểm
                                       </span>
                                     </div>
-                                    <div className="flex items-center justify-between gap-2 text-[14.5px]">
+                                    <div className="flex items-center justify-between gap-2 text-[14.5px] flex-wrap">
                                       <span className="text-slate-600">
-                                        Trang {q.sourcePdfPageNumber ?? q.region.pageIndex + 1} · Nhấn để sửa
+                                        Trang {q.sourcePdfPageNumber ?? q.region.pageIndex + 1}
+                                        {q.subItems && q.subItems.length > 0
+                                          ? ` · ${q.subItems.length} mục con`
+                                          : ''}
+                                        {' · Nhấn để sửa'}
                                       </span>
-                                      {q.teacherApproved ? (
+                                      {isUnclassified ? (
+                                        <span className="px-2.5 py-0.5 rounded-md bg-amber-200 text-amber-950 font-bold">
+                                          Chọn dạng bài
+                                        </span>
+                                      ) : q.teacherApproved ? (
                                         <span className="px-2.5 py-0.5 rounded-md bg-emerald-100 text-emerald-900 font-bold">
                                           Đã kiểm tra
                                         </span>
@@ -3020,34 +3279,58 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
           <div className="flex-1 flex flex-col min-w-0 min-h-0">
             {authorPreviewStudent && (
               <div className="bg-[#164E63] text-white px-5 py-3 flex items-center justify-between gap-3 flex-wrap shrink-0">
-                <div className="flex items-center gap-2.5 text-[17px] font-bold">
+                <div className="flex items-center gap-2.5 text-[16.5px] font-bold">
                   <Eye className="w-6 h-6 text-teal-300 shrink-0" />
                   <span>
-                    Đang xem thử như học sinh — Thầy cô có thể bấm thử các câu hỏi trên trang PDF bên dưới.
+                    Đang xem thử như học sinh (đã ẩn đáp án giáo viên) — Thầy cô hãy làm thử trực tiếp trên trang PDF.
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setAuthorPreviewStudent(false)}
-                  className="inline-flex items-center gap-2 px-5 min-h-[46px] rounded-xl bg-white hover:bg-teal-50 text-[#164E63] font-bold text-[16px] cursor-pointer shadow-sm"
-                >
-                  <ArrowLeft className="w-5 h-5" />
-                  <span>QUAY LẠI CHỈNH SỬA</span>
-                </button>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {(Object.keys(authorPreviewAnswers).length > 0 ||
+                    authorPreviewPlainAnnotations.length > 0) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthorPreviewAnswers({});
+                        setAuthorPreviewPlainAnnotations([]);
+                        notify('Đã xóa các thao tác làm thử.', 'info');
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3.5 min-h-[44px] rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold text-[15px] cursor-pointer"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      <span>Xóa bài làm thử</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setAuthorPreviewStudent(false)}
+                    className="inline-flex items-center gap-2 px-5 min-h-[46px] rounded-xl bg-white hover:bg-teal-50 text-[#164E63] font-bold text-[16px] cursor-pointer shadow-sm"
+                  >
+                    <ArrowLeft className="w-5 h-5" />
+                    <span>QUAY LẠI CHỈNH SỬA</span>
+                  </button>
+                </div>
               </div>
             )}
 
             <InteractivePdfCanvas
               pdfBytes={authorPdfBytes}
-              questions={authorWorksheet?.questions || []}
+              questions={
+                authorPreviewStudent
+                  ? (authorWorksheet?.questions || []).filter(
+                      (q) => q.classificationStatus !== 'unclassified'
+                    )
+                  : authorWorksheet?.questions || []
+              }
               mode={authorPreviewStudent ? 'solve' : 'author'}
               examMode={authorWorksheet?.examMode || 'exam'}
               selectedQuestionId={authorPreviewStudent ? null : selectedAuthorQId}
               answers={authorPreviewStudent ? authorPreviewAnswers : undefined}
-              teacherKeys={
-                authorPreviewStudent && authorWorksheet?.examMode === 'practice'
-                  ? authorKeys
-                  : undefined
+              teacherKeys={undefined}
+              plainAnnotations={authorPreviewStudent ? authorPreviewPlainAnnotations : []}
+              enableDirectPdfTools={authorPreviewStudent}
+              onChangePlainAnnotations={
+                authorPreviewStudent ? setAuthorPreviewPlainAnnotations : undefined
               }
               placingTypeLabel={
                 !authorPreviewStudent && placingType
@@ -3062,7 +3345,11 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
               onPlaceAtPoint={handlePlaceQuestionAtPoint}
               onUpdateRegion={(qId, patch) => {
                 const q = authorWorksheet?.questions.find((item) => item.id === qId);
-                if (q) updateAuthorQuestion(qId, { region: { ...q.region, ...patch } });
+                if (q)
+                  updateAuthorQuestion(qId, {
+                    region: { ...q.region, ...patch },
+                    teacherModified: true,
+                  });
               }}
               onDeleteQuestion={deleteAuthorQuestion}
               onChangeAnswer={(qId, next) =>
