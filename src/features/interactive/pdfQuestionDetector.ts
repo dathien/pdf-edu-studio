@@ -1237,27 +1237,31 @@ function classifyQuestionCluster(
   // --------------------------------------------------------------------------
   // 1. MATCHING (HIGH PRIORITY — "Hãy nối", "Em hãy nối", "Nối mỗi ... với ...", "Ghép đôi")
   // --------------------------------------------------------------------------
-  // Some school PDFs use custom embedded fonts. PDF.js can extract "nối" as
-  // "n!i" (and "mỗi" as "m,i"). Recover this *only for matching intent*,
-  // without changing the source text displayed to teachers/students.
-  const matchingIntentText = folded
-    .replace(/\bn[!|]i\b/g, 'noi')
-    .replace(/\bm[,;]i\b/g, 'moi');
-  const hasMatchingDirective =
-    /(hay\s+noi|em\s+hay\s+noi|noi\s+.{0,60}\s+voi|noi\s+(?:cot|moi|cac|thong\s+tin|hinh|y|tu|cap|o|cau|tranh|anh)|ghep\s*doi|ghep\s*noi|ghep\s+moi|ke\s+duong\s+noi|ve\s+duong\s+noi|keo\s+tha|cot\s*(?:a|1|trai|ben\s*trai).{0,40}cot\s*(?:b|2|phai|ben\s*phai)|match\s+)/i.test(
-      matchingIntentText
-    );
-  // When the instruction itself is font-corrupted, a two-column table with
-  // numbered items on the left and lettered items on the right is additional
-  // evidence of a matching task, not an essay answer box.
+  // Some schoolbook PDFs use embedded fonts that corrupt Vietnamese glyphs:
+  // "Hãy n!i m,i ...", "Hãy n | i ..." and "Hãy n  i ...".
+  // Read the main question directive independently of the table/body so
+  // subsequent answer text cannot change the intended interaction type.
+  const mainDirective = foldVietnamese(cluster.lines[0]?.text || '');
+  const normalizeMatchingGlyphs = (value: string) => value
+    .replace(/\bn\s*[!|,;.:]\s*i\b/g, 'noi')
+    .replace(/\bm\s*[,;.:!]\s*i\b/g, 'moi');
+  const matchingIntentText = normalizeMatchingGlyphs(folded);
+  const normalizedDirective = normalizeMatchingGlyphs(mainDirective);
+  const directiveHasMatchingVerb =
+    /(?:^|\s)(?:hay\s+)?noi\s+(?:moi|cac|thong\s+tin|hinh|tu|cap|cot|y|o|tranh|anh|muc|voi)\b|ghep\s*doi|match\s+(?:each|the|words|items)|connect\s+(?:each|the)/i.test(normalizedDirective);
+  const hasMatchingDirective = directiveHasMatchingVerb ||
+    /(?:hay\s+noi|noi\s+.{0,80}\s+voi|ghep\s*doi|ke\s+duong\s+noi|ve\s+duong\s+noi|keo\s+tha|match\s+|connect\s+)/i.test(matchingIntentText);
   const hasNumberedLeftItems = cluster.lines.some((line) =>
     /(?:^|\s)[1-9]\s*[).]\s*\S/.test(line.text)
   );
   const hasLetteredRightItems = cluster.lines.some((line) =>
     /(?:^|\s)[a-hA-H]\s*[).]\s*\S/.test(line.text)
   );
+  // Two-column tables in the book can be labelled either "Thông tin / Quyết định"
+  // or "Thông tin / Dạng thông tin". A directive saying "nối" is decisive;
+  // a table without the directive requires both numbered and lettered items.
   const hasMatchingTableHeaders =
-    /thong\s+tin/.test(folded) && /quyet\s+dinh/.test(folded);
+    /thong\s+tin/.test(folded) && /(?:quyet\s+dinh|dang\s+thong\s+tin)/.test(folded);
   const isMatchingPrompt =
     hasMatchingDirective ||
     (hasNumberedLeftItems && hasLetteredRightItems && hasMatchingTableHeaders);
