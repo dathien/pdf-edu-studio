@@ -1237,10 +1237,30 @@ function classifyQuestionCluster(
   // --------------------------------------------------------------------------
   // 1. MATCHING (HIGH PRIORITY — "Hãy nối", "Em hãy nối", "Nối mỗi ... với ...", "Ghép đôi")
   // --------------------------------------------------------------------------
-  const isMatchingPrompt =
+  // Some school PDFs use custom embedded fonts. PDF.js can extract "nối" as
+  // "n!i" (and "mỗi" as "m,i"). Recover this *only for matching intent*,
+  // without changing the source text displayed to teachers/students.
+  const matchingIntentText = folded
+    .replace(/\bn[!|]i\b/g, 'noi')
+    .replace(/\bm[,;]i\b/g, 'moi');
+  const hasMatchingDirective =
     /(hay\s+noi|em\s+hay\s+noi|noi\s+.{0,60}\s+voi|noi\s+(?:cot|moi|cac|thong\s+tin|hinh|y|tu|cap|o|cau|tranh|anh)|ghep\s*doi|ghep\s*noi|ghep\s+moi|ke\s+duong\s+noi|ve\s+duong\s+noi|keo\s+tha|cot\s*(?:a|1|trai|ben\s*trai).{0,40}cot\s*(?:b|2|phai|ben\s*phai)|match\s+)/i.test(
-      folded
+      matchingIntentText
     );
+  // When the instruction itself is font-corrupted, a two-column table with
+  // numbered items on the left and lettered items on the right is additional
+  // evidence of a matching task, not an essay answer box.
+  const hasNumberedLeftItems = cluster.lines.some((line) =>
+    /(?:^|\s)[1-9]\s*[).]\s*\S/.test(line.text)
+  );
+  const hasLetteredRightItems = cluster.lines.some((line) =>
+    /(?:^|\s)[a-hA-H]\s*[).]\s*\S/.test(line.text)
+  );
+  const hasMatchingTableHeaders =
+    /thong\s+tin/.test(folded) && /quyet\s+dinh/.test(folded);
+  const isMatchingPrompt =
+    hasMatchingDirective ||
+    (hasNumberedLeftItems && hasLetteredRightItems && hasMatchingTableHeaders);
 
   if (isMatchingPrompt) {
     const isDrag = /(keo\s+tha|drag\s*(?:and|&)\s*drop)/i.test(folded);
