@@ -421,6 +421,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
 
   // ---- SHARED INDEXEDDB LISTS ----
   const [teacherWorksheets, setTeacherWorksheets] = useState<TeacherWorksheetRecord[]>([]);
+  const [confirmDeleteTeacherId, setConfirmDeleteTeacherId] = useState<string | null>(null);
   const [assignments, setAssignments] = useState<AssignmentRecord[]>([]);
   const [savedDrafts, setSavedDrafts] = useState<InteractiveDraftRecord[]>([]);
   const [submissions, setSubmissions] = useState<GradedSubmissionRecord[]>([]);
@@ -1009,6 +1010,15 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
     }
 
     const chosen = validation.pages;
+    const currentPages = authorWorksheet.pageMapping?.sourcePdfPages || [];
+    const changedPages = currentPages.length !== chosen.length || currentPages.some((p, i) => p !== chosen[i]);
+    if (changedPages && authorWorksheet.questions.length > 0) {
+      const agreed = window.confirm(
+        'Đổi trang sẽ tạo một bài mới và bỏ các câu hỏi đang chỉnh sửa khỏi bài hiện tại.\n\n' +
+        'Nhấn Hủy để giữ nguyên bài. Nếu muốn giữ bản cũ, hãy lưu bản gốc giáo viên trước khi đổi trang.'
+      );
+      if (!agreed) return false;
+    }
     setExtractingPages(true);
     try {
       const extractedBytes = await extractSelectedPagesPdf(rawUploadedPdfBytes, chosen);
@@ -2719,9 +2729,9 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                               Tiếp tục bài tập đang soạn
                             </div>
                             <div className="space-y-2">
-                              {teacherWorksheets.slice(0, 3).map((tw) => (
+                              {teacherWorksheets.map((tw) => (
+                                <div key={tw.worksheetId} className="rounded-xl bg-white border border-slate-200 p-3 space-y-2">
                                 <button
-                                  key={tw.worksheetId}
                                   type="button"
                                   onClick={() => {
                                     setAuthorWorksheet(tw.worksheet);
@@ -2747,6 +2757,23 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                                     })}
                                   </div>
                                 </button>
+                                {confirmDeleteTeacherId === tw.worksheetId ? (
+                                  <div className="rounded-lg bg-rose-50 p-2 space-y-2 text-[15px]">
+                                    <p>Xóa bản nháp này khỏi máy? Không thể hoàn tác.</p>
+                                    <div className="flex gap-2">
+                                      <button type="button" className="px-3 py-2 rounded-lg bg-red-700 text-white font-semibold" onClick={async () => {
+                                        const result = await interactiveStorage.deleteTeacherWorksheet(tw.worksheetId);
+                                        if (result.ok) { await refreshLocalLists(); notify('Đã xóa bản nháp.', 'success'); }
+                                        else notify('Không xóa được bản nháp. Thầy cô hãy thử lại.', 'error');
+                                        setConfirmDeleteTeacherId(null);
+                                      }}>Xác nhận xóa</button>
+                                      <button type="button" className="px-3 py-2 rounded-lg border border-slate-300" onClick={() => setConfirmDeleteTeacherId(null)}>Hủy</button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <button type="button" className="inline-flex items-center gap-1 text-[15px] text-red-700 font-semibold px-2 py-1" onClick={() => setConfirmDeleteTeacherId(tw.worksheetId)}><Trash2 className="w-4 h-4" /> Xóa bản nháp</button>
+                                )}
+                                </div>
                               ))}
                             </div>
                           </div>
@@ -3003,7 +3030,17 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
 
                         {currentShownPagesLabel && (
                           <div className="rounded-xl bg-slate-50 border border-slate-200 px-3.5 py-2.5 text-[15.5px] text-slate-700">
-                            Phạm vi đang làm: <strong className="text-[#164E63]">{currentShownPagesLabel}</strong>
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span>Phạm vi đang làm: <strong className="text-[#164E63]">{currentShownPagesLabel}</strong></span>
+                              <button type="button" onClick={() => {
+                                if (!rawPdfInfo || !rawUploadedPdfBytes) {
+                                  notify('Để chọn trang khác, thầy cô cần tải lại tệp PDF gốc đầy đủ.', 'warning');
+                                  authorPdfInputRef.current?.click();
+                                  return;
+                                }
+                                setAuthorStep(1);
+                              }} className="rounded-lg border border-[#087F70] px-3 py-2 font-bold text-[#087F70] bg-white">Chọn lại trang</button>
+                            </div>
                           </div>
                         )}
 
@@ -3024,7 +3061,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                               <Sparkles className="w-6 h-6" />
                               <span>
                                 {authorWorksheet.questions.length > 0
-                                  ? 'NHẬN DIỆN LẠI (AN TOÀN)'
+                                  ? 'TẠO LẠI BÀI TẬP'
                                   : 'TẠO BÀI TẬP TỰ ĐỘNG'}
                               </span>
                             </>
@@ -3101,7 +3138,7 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                             className="w-full inline-flex items-center justify-center gap-2 min-h-[48px] px-4 rounded-xl border-2 border-[#164E63] bg-white hover:bg-[#E6F1EF] text-[#164E63] font-bold text-[16px] cursor-pointer"
                           >
                             <Plus className="w-5 h-5" />
-                            <span>+ THÊM CÂU HỎI</span>
+                            <span>Thêm câu hỏi</span>
                           </button>
 
                           {showAddQuestionMenu && (
@@ -3188,6 +3225,12 @@ export const InteractiveWorksheetHub: React.FC<InteractiveWorksheetHubProps> = (
                           <h2 className="text-[21px] font-bold text-[#164E63]">
                             3. Kiểm tra và giao bài
                           </h2>
+                          <button type="button" className="rounded-lg border border-[#087F70] px-3 py-2 text-[16px] font-bold text-[#087F70]" onClick={() => {
+                            if (!rawPdfInfo || !rawUploadedPdfBytes) {
+                              notify('Thầy cô hãy tải lại tệp PDF gốc đầy đủ để chọn trang khác.', 'warning');
+                              authorPdfInputRef.current?.click();
+                            } else { setAuthorStep(1); }
+                          }}>Chọn lại trang PDF</button>
                           <p className="text-[16px] text-slate-700 leading-relaxed">
                             Thầy cô xem lại các câu hỏi. Nếu đúng, hãy lưu PDF để gửi cho học sinh.
                           </p>
