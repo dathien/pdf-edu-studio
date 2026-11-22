@@ -276,8 +276,8 @@ export const MatchingWidget: React.FC<MatchingWidgetProps> = ({
   // =========================================================================
   if (config.mode === 'line') {
     return (
-      <div className="space-y-1.5 select-none">
-        <div className="flex items-center justify-between gap-2 text-[13px] text-slate-600">
+      <div className="space-y-2 select-none text-[16px] leading-normal">
+        <div className="flex items-center justify-between gap-2 text-[16px] text-slate-600">
           <span>
             {readOnly
               ? `Chế độ vẽ đường nối · Đã nối ${pairs.length}/${config.itemsA.length} cặp`
@@ -360,7 +360,7 @@ export const MatchingWidget: React.FC<MatchingWidgetProps> = ({
 
           {/* Column A */}
           <div className="space-y-1.5 z-20">
-            <div className="text-[12.5px] font-bold text-[#164E63] px-1">
+            <div className="text-[16px] font-bold text-[#164E63] px-1">
               {config.columnATitle || 'Cột A'}
             </div>
             {config.itemsA.map((item, idx) => {
@@ -379,7 +379,7 @@ export const MatchingWidget: React.FC<MatchingWidgetProps> = ({
                     if (readOnly) return;
                     setSelectedAId(isSelected ? null : item.id);
                   }}
-                  className={`relative flex items-center justify-between gap-1.5 rounded-lg border px-2 py-1.5 text-[13.5px] transition-colors ${
+                  className={`relative flex items-center justify-between gap-1.5 rounded-lg border px-2 py-1.5 text-[16px] transition-colors ${
                     readOnly ? 'cursor-default' : 'cursor-pointer'
                   } ${
                     pairStatus === 'correct'
@@ -436,7 +436,7 @@ export const MatchingWidget: React.FC<MatchingWidgetProps> = ({
 
           {/* Column B */}
           <div className="space-y-1.5 z-20">
-            <div className="text-[12.5px] font-bold text-[#164E63] px-1">
+            <div className="text-[16px] font-bold text-[#164E63] px-1">
               {config.columnBTitle || 'Cột B'}
             </div>
             {config.itemsB.map((item, idx) => {
@@ -454,7 +454,7 @@ export const MatchingWidget: React.FC<MatchingWidgetProps> = ({
                       setSelectedAId(null);
                     }
                   }}
-                  className={`relative flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-[13.5px] transition-colors ${
+                  className={`relative flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-[16px] transition-colors ${
                     readOnly ? 'cursor-default' : 'cursor-pointer'
                   } ${
                     selectedAId
@@ -493,7 +493,7 @@ export const MatchingWidget: React.FC<MatchingWidgetProps> = ({
   // =========================================================================
   return (
     <div className="space-y-2 select-none">
-      <div className="flex items-center justify-between gap-2 text-[13px] text-slate-600">
+      <div className="flex items-center justify-between gap-2 text-[16px] text-slate-600">
         <span>
           {readOnly
             ? `Chế độ kéo thả ghép đôi · Đã ghép ${pairs.length}/${config.itemsA.length}`
@@ -514,7 +514,7 @@ export const MatchingWidget: React.FC<MatchingWidgetProps> = ({
       <div className="grid grid-cols-[1.35fr_1fr] gap-2.5 items-start">
         {/* Drop Slots for Column A */}
         <div className="space-y-1.5">
-          <div className="text-[12.5px] font-bold text-[#164E63]">
+          <div className="text-[16px] font-bold text-[#164E63]">
             {config.columnATitle || 'Các mục cần ghép'}
           </div>
           {config.itemsA.map((itemA, idx) => {
@@ -551,7 +551,7 @@ export const MatchingWidget: React.FC<MatchingWidgetProps> = ({
                           : 'border-slate-300 bg-white'
                 }`}
               >
-                <div className="flex items-center justify-between gap-2 text-[13.5px]">
+                <div className="flex items-center justify-between gap-2 text-[16px]">
                   <div className="flex items-center gap-1 min-w-0 font-medium text-slate-800">
                     <span className="font-bold text-[#164E63] shrink-0">{idx + 1}.</span>
                     <MathOrTextLabel item={itemA} />
@@ -561,7 +561,7 @@ export const MatchingWidget: React.FC<MatchingWidgetProps> = ({
                 </div>
                 <div className="mt-1">
                   {placedItem ? (
-                    <div className="flex items-center justify-between gap-1.5 rounded-md bg-[#E6F1EF] border border-[#087F70] px-2 py-1 text-[13px] font-semibold text-[#164E63]">
+                    <div className="flex items-center justify-between gap-1.5 rounded-md bg-[#E6F1EF] border border-[#087F70] px-2 py-1 text-[16px] font-semibold text-[#164E63]">
                       <MathOrTextLabel item={placedItem} />
                       {!readOnly && pair && (
                         <button
@@ -578,7 +578,7 @@ export const MatchingWidget: React.FC<MatchingWidgetProps> = ({
                       )}
                     </div>
                   ) : (
-                    <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 px-2 py-1 text-[12.5px] text-slate-500">
+                    <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 px-2 py-1 text-[16px] text-slate-500">
                       {selectedBId && !readOnly ? 'Nhấn vào đây để thả thẻ đã chọn' : 'Ô thả thẻ đáp án'}
                     </div>
                   )}
@@ -590,7 +590,7 @@ export const MatchingWidget: React.FC<MatchingWidgetProps> = ({
 
         {/* Draggable Card Bank (Column B) */}
         <div className="space-y-1.5">
-          <div className="text-[12.5px] font-bold text-[#164E63]">
+          <div className="text-[16px] font-bold text-[#164E63]">
             {config.columnBTitle || 'Kho thẻ ghép'}
           </div>
           <div className="space-y-1.5 rounded-lg bg-slate-50/90 border border-slate-200 p-1.5">
@@ -617,7 +617,7 @@ export const MatchingWidget: React.FC<MatchingWidgetProps> = ({
                     if (readOnly || isUsed) return;
                     setSelectedBId(isSelected ? null : itemB.id);
                   }}
-                  className={`w-full text-left rounded-md border px-2 py-1.5 text-[13.5px] font-medium touch-none transition-all ${
+                  className={`w-full text-left rounded-md border px-2 py-1.5 text-[16px] font-medium touch-none transition-all ${
                     isUsed
                       ? 'bg-slate-100 border-slate-200 text-slate-400 line-through cursor-not-allowed'
                       : isSelected
@@ -636,7 +636,7 @@ export const MatchingWidget: React.FC<MatchingWidgetProps> = ({
       {/* Floating Pointer-Event Drag Ghost */}
       {draggingCard && (
         <div
-          className="fixed z-90 pointer-events-none px-3 py-1.5 rounded-lg bg-[#164E63] text-white text-[14px] font-semibold shadow-xl border border-teal-300"
+          className="fixed z-90 pointer-events-none px-3 py-1.5 rounded-lg bg-[#164E63] text-white text-[16px] font-semibold shadow-xl border border-teal-300"
           style={{
             left: draggingCard.clientX + 10,
             top: draggingCard.clientY + 10,
