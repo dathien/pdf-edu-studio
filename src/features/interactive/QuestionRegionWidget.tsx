@@ -13,7 +13,6 @@ import {
   Paperclip,
   PenLine,
   PenTool,
-  RotateCcw,
   Square,
   Trash2,
   Undo2,
@@ -128,7 +127,7 @@ const MathLiveFieldInput: React.FC<{
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder || 'Hoặc nhập LaTeX trực tiếp (ví dụ: \\frac{-b}{2a})'}
-        className="w-full rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 font-mono text-[16px] text-slate-700 focus:border-[#087F70] outline-none"
+        className="w-full rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 font-mono text-[12.5px] text-slate-700 focus:border-[#087F70] outline-none"
       />
     </div>
   );
@@ -483,7 +482,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
         }`}
       >
         <PenLine className="w-4 h-4 shrink-0" />
-        <span className="text-[16px] font-bold whitespace-nowrap">
+        <span className="text-[13.5px] font-bold whitespace-nowrap">
           {mode === 'author'
             ? `${question.code} · Viết câu trả lời`
             : hasWritten
@@ -527,41 +526,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
         data-question-id={question.id}
         className="absolute inset-0 pointer-events-none z-20"
       >
-        {/* Minimal Author-only header badge at top-right of question */}
-        {mode === 'author' && (
-          <div
-            style={{
-              left: `${Math.min(cssPageW - 190, Math.max(8, (resolvedX + resolvedW - 185) * zoom))}px`,
-              top: `${Math.max(4, resolvedY * zoom - 4)}px`,
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect?.();
-            }}
-            className={`pointer-events-auto absolute inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[16px] font-bold shadow-2xs cursor-pointer ${
-              selected
-                ? 'bg-[#087F70] border-[#087F70] text-white'
-                : 'bg-white/92 border-[#087F70]/70 text-[#164E63] hover:bg-teal-50'
-            }`}
-          >
-            <span>
-              {question.code} · {isMulti ? 'Nhiều đáp án' : 'Trắc nghiệm'}
-            </span>
-            {onDeleteQuestion && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteQuestion();
-                }}
-                className="p-0.5 rounded hover:bg-red-100 hover:text-red-700 cursor-pointer"
-                title="Xóa câu hỏi này"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
-            )}
-          </div>
-        )}
+        {/* Author controls are in the question sidebar, never over PDF text. */}
 
         {/* Transparent clickable checkboxes anchored directly beside each option on the PDF */}
         {opts.map((opt) => {
@@ -669,38 +634,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
         data-question-id={question.id}
         className="absolute inset-0 pointer-events-none z-20"
       >
-        {mode === 'author' && (
-          <div
-            style={{
-              left: `${Math.min(cssPageW - 185, Math.max(8, (resolvedX + resolvedW - 180) * zoom))}px`,
-              top: `${Math.max(4, resolvedY * zoom - 4)}px`,
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect?.();
-            }}
-            className={`pointer-events-auto absolute inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[16px] font-bold shadow-2xs cursor-pointer ${
-              selected
-                ? 'bg-[#087F70] border-[#087F70] text-white'
-                : 'bg-white/92 border-[#087F70]/70 text-[#164E63] hover:bg-teal-50'
-            }`}
-          >
-            <span>{question.code} · Đúng / Sai</span>
-            {onDeleteQuestion && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteQuestion();
-                }}
-                className="p-0.5 rounded hover:bg-red-100 hover:text-red-700 cursor-pointer"
-                title="Xóa câu hỏi này"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
-            )}
-          </div>
-        )}
+        {/* No floating author badge: it obscures the source question. */}
 
         {stmts.map((st) => {
           const ra = st.rowAnchor!;
@@ -767,7 +701,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                         ? `Kéo để chỉnh vị trí nút ${col.val === 'T' ? 'Đúng' : 'Sai'} của ${st.label}`
                         : `${st.label} ${col.val === 'T' ? 'Đúng' : 'Sai'}`
                     }
-                    className={`pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 rounded-md flex items-center justify-center text-[16px] font-black transition-all ${
+                    className={`pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 rounded-md flex items-center justify-center text-[12px] font-black transition-all ${
                       mode === 'author' ? 'cursor-move' : 'cursor-pointer'
                     } ${
                       active
@@ -952,60 +886,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
           )}
         </svg>
 
-        {/* Author badge OR Student compact Reset button (only when connections exist) */}
-        {mode === 'author' ? (
-          <div
-            style={{
-              left: `${Math.min(cssPageW - 195, Math.max(8, (resolvedX + resolvedW - 190) * zoom))}px`,
-              top: `${Math.max(4, resolvedY * zoom - 4)}px`,
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect?.();
-            }}
-            className={`pointer-events-auto absolute inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[16px] font-bold shadow-2xs cursor-pointer ${
-              selected
-                ? 'bg-[#087F70] border-[#087F70] text-white'
-                : 'bg-white/92 border-[#087F70]/70 text-[#164E63] hover:bg-teal-50'
-            }`}
-          >
-            <span>{question.code} · Ghép đôi trực tiếp</span>
-            {onDeleteQuestion && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteQuestion();
-                }}
-                className="p-0.5 rounded hover:bg-red-100 hover:text-red-700 cursor-pointer"
-                title="Xóa câu hỏi này"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
-            )}
-          </div>
-        ) : (
-          mode === 'solve' &&
-          pairs.length > 0 && (
-            <button
-              type="button"
-              style={{
-                left: `${Math.min(cssPageW - 95, Math.max(8, (resolvedX + resolvedW - 90) * zoom))}px`,
-                top: `${Math.max(4, resolvedY * zoom - 4)}px`,
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                patchAnswer({ matchingPairs: [] });
-                setSelectedMatchAId(null);
-              }}
-              className="pointer-events-auto absolute inline-flex items-center gap-1 rounded-lg bg-white/95 border border-slate-300 hover:border-red-400 hover:text-red-700 px-2 py-0.5 text-[16px] font-bold text-slate-700 shadow-2xs cursor-pointer"
-              title="Xóa các đường nối của câu này để nối lại"
-            >
-              <RotateCcw className="w-3 h-3" />
-              <span>Làm lại</span>
-            </button>
-          )
-        )}
+        {/* Question actions belong in the sidebar; no badge over source PDF. */}
 
         {/* Left column interactive ports (A) */}
         {itemsA.map((itemA, idx) => {
@@ -1151,38 +1032,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
         data-question-id={question.id}
         className="absolute inset-0 pointer-events-none z-20"
       >
-        {mode === 'author' && (
-          <div
-            style={{
-              left: `${Math.min(cssPageW - 180, Math.max(8, (resolvedX + resolvedW - 175) * zoom))}px`,
-              top: `${Math.max(4, resolvedY * zoom - 4)}px`,
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect?.();
-            }}
-            className={`pointer-events-auto absolute inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[16px] font-bold shadow-2xs cursor-pointer ${
-              selected
-                ? 'bg-[#087F70] border-[#087F70] text-white'
-                : 'bg-white/92 border-[#087F70]/70 text-[#164E63]'
-            }`}
-          >
-            <span>{question.code} · Điền chỗ trống</span>
-            {onDeleteQuestion && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteQuestion();
-                }}
-                className="p-0.5 rounded hover:bg-red-100 hover:text-red-700 cursor-pointer"
-                title="Xóa câu hỏi này"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
-            )}
-          </div>
-        )}
+        {/* No floating author badge over the original worksheet. */}
 
         {slots.map((slot) => {
           const anc = slot.anchor!;
@@ -1269,7 +1119,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
       {(mode !== 'solve' || (question.type !== 'essay' && question.type !== 'short' && question.type !== 'number')) && (
         <div
           onPointerDown={mode === 'author' ? startMove : undefined}
-          className={`px-2.5 py-1 flex items-center justify-between gap-2 text-[16px] font-semibold border-b ${
+          className={`px-2.5 py-1 flex items-center justify-between gap-2 text-[13.5px] font-semibold border-b ${
             mode === 'author'
               ? question.needsReview && !question.teacherApproved
                 ? 'bg-amber-100/90 text-amber-950 border-amber-300 cursor-move select-none'
@@ -1287,13 +1137,13 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                 : `${question.code} · ${QUESTION_TYPE_META[question.type].shortLabel}`}
             </span>
             {mode === 'author' && question.needsReview && !question.teacherApproved && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-600 text-white text-[16px] font-bold shrink-0">
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-600 text-white text-[11.5px] font-bold shrink-0">
                 <AlertCircle className="w-3 h-3" />
                 <span>Cần kiểm tra</span>
               </span>
             )}
             {mode === 'author' && question.teacherApproved && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-700 text-white text-[16px] font-bold shrink-0">
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-700 text-white text-[11.5px] font-bold shrink-0">
                 <CheckCircle2 className="w-3 h-3" />
                 <span>Đã kiểm tra</span>
               </span>
@@ -1301,13 +1151,13 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             {mode === 'grade' && gradingDetail ? (
-              <span className="px-2 py-0.5 rounded bg-white border border-red-300 text-[#DC2626] font-bold text-[16px]">
+              <span className="px-2 py-0.5 rounded bg-white border border-red-300 text-[#DC2626] font-bold text-[13px]">
                 {typeof gradingDetail.earnedPoints === 'number'
                   ? `${gradingDetail.earnedPoints} / ${gradingDetail.maxPoints} điểm`
                   : `Chưa chấm / ${gradingDetail.maxPoints} điểm`}
               </span>
             ) : mode === 'author' ? (
-              <span className="text-[16px] font-semibold text-slate-700">
+              <span className="text-[12.5px] font-semibold text-slate-700">
                 {question.maxPoints}đ
               </span>
             ) : null}
@@ -1330,7 +1180,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
       )}
 
       {/* Question Body (All 14 Distinct Interactive Types) */}
-      <div className="p-2 flex-1 overflow-y-auto text-[16px] text-slate-800 space-y-2">
+      <div className="p-2 flex-1 overflow-y-auto text-[14px] text-slate-800 space-y-2">
         {/* 1. MCQ Single Choice */}
         {question.type === 'mcq' && (
           <div className="grid grid-cols-2 gap-1.5">
@@ -1343,7 +1193,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                   type="button"
                   disabled={readOnly}
                   onClick={() => patchAnswer({ mcqSelectedId: opt.id })}
-                  className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left text-[16px] transition-colors ${
+                  className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left text-[14px] transition-colors ${
                     readOnly ? 'cursor-default' : 'cursor-pointer'
                   } ${
                     isKey
@@ -1380,7 +1230,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                       : [...cur, opt.id];
                     patchAnswer({ mcqMultiSelectedIds: next });
                   }}
-                  className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left text-[16px] transition-colors ${
+                  className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left text-[14px] transition-colors ${
                     readOnly ? 'cursor-default' : 'cursor-pointer'
                   } ${
                     isKey
@@ -1414,7 +1264,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                   key={st.id}
                   className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 px-2 py-1"
                 >
-                  <span className="text-[16px] leading-snug">
+                  <span className="text-[13.5px] leading-snug">
                     <strong className="text-[#164E63]">{st.label}</strong> {st.text}
                   </span>
                   <div className="flex items-center gap-1 shrink-0">
@@ -1431,7 +1281,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                               tfAnswers: { ...(answer?.tfAnswers || {}), [st.id]: val },
                             })
                           }
-                          className={`px-2 py-0.5 rounded text-[16px] font-bold border ${
+                          className={`px-2 py-0.5 rounded text-[13px] font-bold border ${
                             readOnly ? 'cursor-default' : 'cursor-pointer'
                           } ${
                             active
@@ -1464,7 +1314,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
               className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[14.5px] text-slate-900 focus:border-[#087F70] outline-none"
             />
             {question.shortUnit && (
-              <span className="text-[16px] font-semibold text-[#164E63] shrink-0">
+              <span className="text-[14px] font-semibold text-[#164E63] shrink-0">
                 {question.shortUnit}
               </span>
             )}
@@ -1500,7 +1350,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
         {question.type === 'fill_blank' && (
           <div className="space-y-1.5">
             {(question.fillBlanks || []).map((slot) => (
-              <div key={slot.id} className="flex flex-wrap items-center gap-1.5 text-[16px]">
+              <div key={slot.id} className="flex flex-wrap items-center gap-1.5 text-[14px]">
                 {slot.prefix && <span>{slot.prefix}</span>}
                 <input
                   type="text"
@@ -1515,7 +1365,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                     })
                   }
                   placeholder={slot.placeholder || '...'}
-                  className="w-28 rounded-md border border-[#087F70]/60 bg-white px-2 py-0.5 text-[16px] font-semibold text-[#164E63] focus:border-[#087F70] outline-none"
+                  className="w-28 rounded-md border border-[#087F70]/60 bg-white px-2 py-0.5 text-[14px] font-semibold text-[#164E63] focus:border-[#087F70] outline-none"
                 />
                 {slot.suffix && <span>{slot.suffix}</span>}
               </div>
@@ -1531,7 +1381,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
             value={answer?.essayText || ''}
             onChange={(e) => patchAnswer({ essayText: e.target.value })}
             placeholder={question.essayPlaceholder || 'Nhập bài làm tự luận chi tiết tại đây...'}
-            className="w-full h-full min-h-[82px] rounded-lg border border-slate-300 bg-white p-2 text-[16px] text-slate-900 focus:border-[#087F70] outline-none resize-none"
+            className="w-full h-full min-h-[82px] rounded-lg border border-slate-300 bg-white p-2 text-[14px] text-slate-900 focus:border-[#087F70] outline-none resize-none"
           />
         )}
 
@@ -1557,10 +1407,10 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
               return (
                 <div
                   key={id}
-                  className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[16px]"
+                  className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[13.5px]"
                 >
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="w-5 h-5 rounded-full bg-[#164E63] text-white text-[16px] font-bold flex items-center justify-center shrink-0">
+                    <span className="w-5 h-5 rounded-full bg-[#164E63] text-white text-[12px] font-bold flex items-center justify-center shrink-0">
                       {idx + 1}
                     </span>
                     <span className="leading-snug">{item.text}</span>
@@ -1597,7 +1447,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
         {question.type === 'reading' && (
           <div className="space-y-2">
             {question.readingPassage && (
-              <div className="rounded-lg bg-slate-50 border border-slate-200 p-2 text-[16px] leading-relaxed text-slate-700 italic">
+              <div className="rounded-lg bg-slate-50 border border-slate-200 p-2 text-[13px] leading-relaxed text-slate-700 italic">
                 {question.readingPassage}
               </div>
             )}
@@ -1606,7 +1456,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                 const val = answer?.readingAnswers?.[sq.id] || '';
                 return (
                   <div key={sq.id} className="space-y-1">
-                    <div className="text-[16px] font-semibold text-[#164E63]">{sq.prompt}</div>
+                    <div className="text-[13px] font-semibold text-[#164E63]">{sq.prompt}</div>
                     {sq.kind === 'mcq' && sq.options ? (
                       <div className="flex flex-wrap gap-1.5">
                         {sq.options.map((opt) => (
@@ -1619,7 +1469,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                                 readingAnswers: { ...(answer?.readingAnswers || {}), [sq.id]: opt },
                               })
                             }
-                            className={`px-2 py-1 rounded-md border text-[16px] ${
+                            className={`px-2 py-1 rounded-md border text-[13px] ${
                               readOnly ? 'cursor-default' : 'cursor-pointer'
                             } ${
                               val === opt
@@ -1645,7 +1495,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                           })
                         }
                         placeholder="Nhập câu trả lời..."
-                        className="w-full rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[16px] focus:border-[#087F70] outline-none"
+                        className="w-full rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[13.5px] focus:border-[#087F70] outline-none"
                       />
                     )}
                   </div>
@@ -1669,7 +1519,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                         formulaLatex: `${answer?.formulaLatex || ''}${answer?.formulaLatex ? ' ' : ''}${sn.latex}`,
                       })
                     }
-                    className="px-2 py-0.5 rounded bg-slate-100 hover:bg-teal-50 border border-slate-200 text-[16px] font-medium text-[#164E63] cursor-pointer"
+                    className="px-2 py-0.5 rounded bg-slate-100 hover:bg-teal-50 border border-slate-200 text-[12px] font-medium text-[#164E63] cursor-pointer"
                   >
                     + {sn.label}
                   </button>
@@ -1715,7 +1565,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                   <select
                     value={penWidth}
                     onChange={(e) => setPenWidth(Number(e.target.value))}
-                    className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[16px]"
+                    className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[12px]"
                   >
                     <option value={1.8}>Mảnh</option>
                     <option value={2.5}>Vừa</option>
@@ -1729,7 +1579,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                       const prev = answer?.drawingStrokes || [];
                       if (prev.length > 0) patchAnswer({ drawingStrokes: prev.slice(0, -1) });
                     }}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-[16px] cursor-pointer"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-[12px] cursor-pointer"
                   >
                     <Undo2 className="w-3 h-3" />
                     <span>Hoàn tác</span>
@@ -1737,7 +1587,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                   <button
                     type="button"
                     onClick={() => patchAnswer({ drawingStrokes: [] })}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-300 bg-white hover:bg-red-50 hover:text-red-600 text-[16px] cursor-pointer"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-300 bg-white hover:bg-red-50 hover:text-red-600 text-[12px] cursor-pointer"
                   >
                     <Eraser className="w-3 h-3" />
                     <span>Xóa hết</span>
@@ -1783,7 +1633,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
           <div className="space-y-1.5">
             {(question.diagramPins || []).map((pin) => (
               <div key={pin.id} className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded-full bg-[#164E63] text-white text-[16px] font-bold shrink-0">
+                <span className="px-2 py-0.5 rounded-full bg-[#164E63] text-white text-[12.5px] font-bold shrink-0">
                   {pin.code}
                 </span>
                 <input
@@ -1796,7 +1646,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
                     })
                   }
                   placeholder={pin.hint || 'Nhập tên bộ phận / chú thích...'}
-                  className="flex-1 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[16px] focus:border-[#087F70] outline-none"
+                  className="flex-1 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[13.5px] focus:border-[#087F70] outline-none"
                 />
               </div>
             ))}
@@ -1807,7 +1657,7 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
         {question.type === 'attachment' && (
           <div className="space-y-1.5">
             {!readOnly && (
-              <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-[#087F70] bg-teal-50/50 hover:bg-teal-50 text-[#164E63] font-semibold text-[16px] cursor-pointer">
+              <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-[#087F70] bg-teal-50/50 hover:bg-teal-50 text-[#164E63] font-semibold text-[13.5px] cursor-pointer">
                 <Paperclip className="w-4 h-4 text-[#087F70]" />
                 <span>Chọn tệp sản phẩm đính kèm</span>
                 <input
@@ -1822,14 +1672,14 @@ export const QuestionRegionWidget: React.FC<QuestionRegionWidgetProps> = ({
               </label>
             )}
             {question.attachmentAcceptHint && (
-              <div className="text-[16px] text-slate-500">{question.attachmentAcceptHint}</div>
+              <div className="text-[12.5px] text-slate-500">{question.attachmentAcceptHint}</div>
             )}
-            {attError && <div className="text-[16px] text-red-600 font-medium">{attError}</div>}
+            {attError && <div className="text-[12.5px] text-red-600 font-medium">{attError}</div>}
             <div className="space-y-1">
               {(answer?.attachments || []).map((att) => (
                 <div
                   key={att.id}
-                  className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-[16px]"
+                  className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-[13px]"
                 >
                   <span className="truncate font-medium text-slate-800">
                     {att.fileName} ({Math.max(1, Math.round(att.size / 1024))} KB)
