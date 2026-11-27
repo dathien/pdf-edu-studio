@@ -105,6 +105,7 @@ export function evaluateMcqItem(item: McqItem, tf4Rule: Tf4ScoringRule): number 
 }
 
 export function getQuestionEarnedScore(q: GradingQuestion): number {
+  if (q.id.startsWith("quick-")) return q.earnedScore ?? 0;
   if (q.subParts.length > 0) {
     const subTotal = sumDec(q.subParts.map((sp) => sp.earnedScore ?? 0));
     return clampScore(subTotal, q.maxScore);
@@ -125,8 +126,8 @@ export interface GradingSummary {
 }
 
 export function computeGradingSummary(session: GradingSession): GradingSummary {
-  const essayRaw = sumDec(session.questions.map((q) => getQuestionEarnedScore(q)));
-  const essayMax = sumDec(session.questions.map((q) => q.maxScore));
+  const essayRaw = sumDec(session.questions.filter(q => !q.id.startsWith("quick-")).map((q) => getQuestionEarnedScore(q)));
+  const essayMax = sumDec(session.questions.filter(q=>!q.id.startsWith("quick-")).map((q) => q.maxScore));
 
   const mcqRaw = sumDec(session.mcqItems.map((m) => evaluateMcqItem(m, session.tf4Rule)));
   const mcqMax = sumDec(session.mcqItems.map((m) => m.maxScore));
@@ -136,7 +137,7 @@ export function computeGradingSummary(session: GradingSession): GradingSummary {
   else if (session.mode === 'mcq') rawTotal = mcqRaw;
   else rawTotal = addDec(essayRaw, mcqRaw);
 
-  rawTotal = clampScore(rawTotal, session.scaleMax);
+  rawTotal = clampScore(addDec(rawTotal, sumDec(session.questions.filter(q => q.id.startsWith("quick-")).map(q => q.earnedScore ?? 0))), session.scaleMax);
   const finalScore = clampScore(applyRounding(rawTotal, session.roundingMode), session.scaleMax);
 
   const answeredEssay = session.questions.filter(
