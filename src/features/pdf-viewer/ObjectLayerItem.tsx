@@ -450,7 +450,7 @@ export const ObjectLayerItem: React.FC<ObjectLayerItemProps> = ({
       case 'grading-stamp':
         return (
           <div
-            className="w-full h-full rounded-md border-2 bg-white/90 flex items-center justify-center font-bold px-1.5 whitespace-nowrap"
+            className="w-full h-full rounded-md bg-transparent flex items-center justify-center font-bold px-1.5 whitespace-nowrap"
             style={{
               borderColor: obj.color,
               color: obj.color,
@@ -464,7 +464,7 @@ export const ObjectLayerItem: React.FC<ObjectLayerItemProps> = ({
       case 'grading-score':
         return (
           <div
-            className="w-full h-full rounded-md border-2 bg-white/95 flex items-center justify-center font-bold px-1.5 tabular-nums whitespace-nowrap shadow-2xs"
+            className="w-full h-full rounded-md bg-transparent flex items-center justify-center font-bold px-1.5 tabular-nums whitespace-nowrap shadow-2xs"
             style={{
               borderColor: obj.color,
               color: obj.color,
@@ -472,7 +472,7 @@ export const ObjectLayerItem: React.FC<ObjectLayerItemProps> = ({
             }}
             title={`Điểm đồng bộ với ${obj.questionLabel}`}
           >
-            {obj.questionLabel}: +{formatScoreVi(obj.score)} / {formatScoreVi(obj.maxScore)}
+            {obj.questionId.startsWith("quick-") ? `${obj.score > 0 ? "+" : ""}${formatScoreVi(obj.score)}` : `${obj.questionLabel}: ${formatScoreVi(obj.score)} / ${formatScoreVi(obj.maxScore)}`}
           </div>
         );
 
