@@ -1002,6 +1002,8 @@ export async function exportDocumentToPdf(
           borderColor: col,
           borderWidth: 2,
           color: rgb(1, 0.97, 0.97),
+          opacity: 0,
+          borderOpacity: 1,
         });
         const scoreText =
           obj.template === 'short'
