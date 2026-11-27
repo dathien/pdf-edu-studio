@@ -954,16 +954,6 @@ export async function exportDocumentToPdf(
       } else if (obj.type === 'grading-stamp') {
         const py = pageH - obj.y - obj.height;
         const col = hexToRgb(obj.color);
-        pdfPage.drawRectangle({
-          x: obj.x,
-          y: py,
-          width: obj.width,
-          height: obj.height,
-          borderColor: col,
-          borderWidth: 1.4,
-          color: rgb(1, 1, 1),
-          opacity: 0.92,
-        });
         pdfPage.drawText(obj.label, {
           x: obj.x + 6,
           y: py + obj.height / 2 - obj.fontSize * 0.35,
@@ -974,16 +964,7 @@ export async function exportDocumentToPdf(
       } else if (obj.type === 'grading-score') {
         const py = pageH - obj.y - obj.height;
         const col = hexToRgb(obj.color);
-        pdfPage.drawRectangle({
-          x: obj.x,
-          y: py,
-          width: obj.width,
-          height: obj.height,
-          borderColor: col,
-          borderWidth: 1.5,
-          color: rgb(1, 0.96, 0.96),
-        });
-        const labelStr = `${obj.questionLabel}: ${formatScoreVi(obj.score)}/${formatScoreVi(obj.maxScore)}`;
+        const labelStr = obj.questionId.startsWith("quick-") ? `${obj.score > 0 ? "+" : ""}${formatScoreVi(obj.score)}` : `${obj.questionLabel}: ${formatScoreVi(obj.score)}/${formatScoreVi(obj.maxScore)}`;
         pdfPage.drawText(labelStr, {
           x: obj.x + 7,
           y: py + obj.height / 2 - 4.5,
