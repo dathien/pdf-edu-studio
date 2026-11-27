@@ -3,7 +3,6 @@ import {
   AlertCircle,
   BookOpen,
   CheckCircle2,
-  ClipboardList,
   CloudDownload,
   CloudOff,
   Loader2,
@@ -24,9 +23,6 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({ pwa }) => {
   const openGuide = useStudioStore((s) => s.openGuide);
   const closeGuide = useStudioStore((s) => s.closeGuide);
   const guideOpen = useStudioStore((s) => s.guideView.open);
-  const interactiveOpen = useStudioStore((s) => s.interactiveView.open);
-  const openInteractive = useStudioStore((s) => s.openInteractive);
-  const closeInteractive = useStudioStore((s) => s.closeInteractive);
 
   return (
     <header
@@ -119,21 +115,6 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({ pwa }) => {
 
         {/* Shared Browser-Aware PWA Install Action */}
         <PwaInstallManager pwa={pwa} variant="header-button" />
-
-        {/* Interactive PDF Worksheets Entry */}
-        <button
-          type="button"
-          onClick={() => (interactiveOpen ? closeInteractive() : openInteractive('solve'))}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[15px] font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
-            interactiveOpen
-              ? 'bg-white text-[#087F70]'
-              : 'bg-[#087F70] hover:bg-[#0a9685] text-white border border-teal-400/40'
-          }`}
-          title="Mở phân hệ Bài tập PDF tương tác Online/Offline"
-        >
-          <ClipboardList className="w-4 h-4 shrink-0" />
-          <span>Bài tập PDF</span>
-        </button>
 
         {/* Dedicated User Guide Center */}
         <button
