@@ -504,7 +504,7 @@ export const ObjectLayerItem: React.FC<ObjectLayerItemProps> = ({
         const maxStr = formatScoreVi(summary?.scaleMax ?? 10);
         return (
           <div
-            className="w-full h-full rounded-lg border-2 bg-white/95 p-2 flex flex-col justify-center"
+            className="w-full h-full rounded-lg border-2 bg-transparent p-2 flex flex-col justify-center"
             style={{ borderColor: obj.color, color: obj.color }}
           >
             <div className="font-extrabold tabular-nums leading-tight" style={{ fontSize: 15 * zoom }}>
