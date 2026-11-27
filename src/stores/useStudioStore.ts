@@ -74,6 +74,8 @@ interface StudioState {
   activeStampCode: string;
   activeStampLabel: string;
   activeStampColor: string;
+  gradingMarkSize: number;
+  quickGradeValue: number;
   activeQuestionIdForScore: string;
   defaultTextColor: string;
   defaultTextSize: number;
@@ -250,6 +252,8 @@ export const useStudioStore = create<StudioState>((set, get) => ({
   activeStampCode: 'correct-mark',
   activeStampLabel: '✓ Đúng',
   activeStampColor: '#059669',
+  gradingMarkSize: 23,
+  quickGradeValue: 0.25,
   activeQuestionIdForScore: 'q1',
   defaultTextColor: '#1F2937',
   defaultTextSize: 13,
@@ -560,7 +564,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
           nextGrading = {
             ...d.grading,
             status: d.grading.status === 'ungraded' ? 'in_progress' : d.grading.status,
-            questions: d.grading.questions.map((q) =>
+            questions: withZ.questionId.startsWith("quick-") ? [...d.grading.questions, { id: withZ.questionId, label: "Điểm từng ý", maxScore: withZ.maxScore, earnedScore: withZ.score, subParts: [] }] : d.grading.questions.map((q) =>
               q.id === withZ.questionId ? { ...q, earnedScore: Math.min(q.maxScore, withZ.score) } : q
             ),
           };
@@ -589,7 +593,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
               ...d.grading,
               questions: d.grading.questions.map((q) =>
                 q.id === updated.questionId
-                  ? { ...q, earnedScore: Math.min(q.maxScore, Math.max(0, updated.score)) }
+                  ? { ...q, earnedScore: q.id.startsWith("quick-") ? updated.score : Math.min(q.maxScore, Math.max(0, updated.score)) }
                   : q
               ),
             };
@@ -613,14 +617,14 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         if (d.id !== s.activeDocId) return d;
         const removedScores = d.objects.filter(
           (o): o is Extract<StudioObject, { type: 'grading-score' }> =>
-            idSet.has(o.id) && o.type === 'grading-score'
+            idSet.has(o.id) && !o.locked && o.type === 'grading-score'
         );
         let nextGrading = d.grading;
         if (removedScores.length > 0) {
           const removedQIds = new Set(removedScores.map((r) => r.questionId));
           nextGrading = {
             ...d.grading,
-            questions: d.grading.questions.map((q) =>
+            questions: d.grading.questions.filter(q => !q.id.startsWith("quick-") || !removedQIds.has(q.id)).map((q) =>
               removedQIds.has(q.id) ? { ...q, earnedScore: null } : q
             ),
           };
@@ -846,7 +850,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
         const nextGrading = updater(d.grading);
         // Keep placed grading-score objects synced with question table
         const qMap = new Map(nextGrading.questions.map((q) => [q.id, q]));
-        const nextObjects = d.objects.map((o) => {
+        const nextObjects = d.objects.filter(o => o.type !== "grading-score" || qMap.has(o.questionId)).map((o) => {
           if (o.type !== 'grading-score') return o;
           const q = qMap.get(o.questionId);
           if (!q) return o;
@@ -871,7 +875,7 @@ export const useStudioStore = create<StudioState>((set, get) => ({
       status: g.status === 'ungraded' ? 'in_progress' : g.status,
       questions: g.questions.map((q) =>
         q.id === questionId
-          ? { ...q, earnedScore: newScore === null ? null : Math.min(q.maxScore, Math.max(0, newScore)) }
+          ? { ...q, earnedScore: newScore === null ? null : q.id.startsWith("quick-") ? newScore : Math.min(q.maxScore, Math.max(0, newScore)) }
           : q
       ),
     }));
