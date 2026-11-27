@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Award,
   CheckCircle2,
@@ -39,13 +39,25 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
   const gradedPapers = useStudioStore((s) => s.gradedPapers);
   const notify = useStudioStore((s) => s.notify);
 
-  const [subTab, setSubTab] = useState<'scores' | 'stamps' | 'comments' | 'gradebook'>('scores');
+  const removeCommentTemplate = useStudioStore(s => s.removeCommentTemplate);
+  const markSize = useStudioStore(s => s.gradingMarkSize);
+  const [commentCategory,setCommentCategory] = useState("Tất cả");
+  const [quickInput, setQuickInput] = useState("0,75");
+  const [subTab, setSubTab] = useState<'scores' | 'stamps' | 'comments' | 'gradebook'>('stamps');
   const [customStampText, setCustomStampText] = useState('');
   const [customStampColor, setCustomStampColor] = useState('#DC2626');
   const [newCommentText, setNewCommentText] = useState('');
   const [gradebookFilter, setGradebookFilter] = useState<'all' | 'graded' | 'in_progress' | 'ungraded'>('all');
 
   const g = doc.grading;
+  const subjectNotes: Record<string,string[]> = { 'Toán':['Thiếu điều kiện xác định','Tính toán sai'], 'Vật lí':['Thiếu đơn vị','Sai công thức'], 'Hóa học':['Chưa cân bằng phương trình','Thiếu điều kiện phản ứng'], 'Sinh học':['Thiếu thuật ngữ khoa học'], 'Tin học':['Sai cú pháp','Sai thuật toán'], 'Ngữ văn':['Thiếu dẫn chứng'], 'Tiếng Anh':['Sai ngữ pháp'], 'Lịch sử':['Sai mốc thời gian'], 'Địa lí':['Thiếu số liệu'] };
+  const visibleComments = commentTemplates.filter(t=>commentCategory==='Tất cả'||t.category===commentCategory);
+  const chooseQuick = (value: number) => {
+    if (!Number.isFinite(value) || Math.abs(value) > g.scaleMax) return;
+    useStudioStore.setState({ quickGradeValue: value, activeStampColor: customStampColor });
+    setActiveQuestionIdForScore('__quick__');
+    notify('Nhấn lên bài để ghi điểm. Nhấn Esc để dừng.', 'success');
+  };
   const summary = computeGradingSummary(g);
 
   const insertTotalStamp = () => {
@@ -93,6 +105,17 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
     notify('Đã chèn nhận xét lên trang PDF', 'success');
   };
 
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || !/^[1-9]$/.test(e.key) || (e.target as HTMLElement)?.closest?.('input,textarea,select,[contenteditable=true]')) return;
+      const state = useStudioStore.getState();
+      if (state.activeModal || state.activeDocId !== doc.id || state.rightPanelMode !== 'grading') return;
+      const tpl = visibleComments[Number(e.key)-1];
+      if (tpl) { e.preventDefault(); setStampPreset('comment-'+tpl.id, tpl.text, customStampColor); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [doc.id, commentTemplates, commentCategory, customStampColor, setStampPreset]);
   const addQuestion = () => {
     const nextNum = g.questions.length + 1;
     updateGradingSession((prev) => ({
@@ -134,17 +157,17 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
       : gradedPapers.filter((p) => p.status === gradebookFilter);
 
   return (
-    <div className="p-3.5 space-y-3.5 text-[14px] text-slate-800">
+    <div className="p-3.5 space-y-3.5 text-[15px] text-slate-800">
       {/* Live Score Summary Banner */}
       <div className="rounded-xl bg-red-50 border border-red-200 p-3.5 space-y-2">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <div className="text-[12.5px] font-semibold text-red-700">Tổng điểm hiện tại</div>
+            <div className="text-[15px] font-semibold text-red-700">Tổng điểm hiện tại</div>
             <div className="text-[24px] font-extrabold text-[#DC2626] tabular-nums leading-tight">
               {formatScoreVi(summary.finalScore)} / {formatScoreVi(summary.scaleMax)}
             </div>
             {summary.rawTotal !== summary.finalScore && (
-              <div className="text-[12px] text-slate-600 tabular-nums">
+              <div className="text-[15px] text-slate-600 tabular-nums">
                 Điểm gốc: {formatScoreVi(summary.rawTotal)} (đã làm tròn {g.roundingMode})
               </div>
             )}
@@ -153,7 +176,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
             <button
               type="button"
               onClick={insertTotalStamp}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#DC2626] hover:bg-red-700 text-white font-semibold text-[13px] whitespace-nowrap cursor-pointer"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#DC2626] hover:bg-red-700 text-white font-semibold text-[15px] whitespace-nowrap cursor-pointer"
             >
               <Award className="w-4 h-4" />
               <span>Đóng tổng điểm</span>
@@ -161,7 +184,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
             <button
               type="button"
               onClick={saveCurrentPaperToGradebook}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-red-300 hover:bg-red-100 text-[#DC2626] font-semibold text-[13px] whitespace-nowrap cursor-pointer"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-red-300 hover:bg-red-100 text-[#DC2626] font-semibold text-[15px] whitespace-nowrap cursor-pointer"
             >
               <Save className="w-3.5 h-3.5" />
               <span>Lưu bảng điểm</span>
@@ -170,8 +193,18 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
         </div>
       </div>
 
+      <section className="space-y-2 rounded-lg border border-teal-200 p-2">
+        <div className="font-bold">Chấm nhanh trên bài</div>
+        <div className="flex items-center gap-2 flex-wrap"><label>Màu bút <input type="color" value={customStampColor} onChange={e => {setCustomStampColor(e.target.value); useStudioStore.setState({activeStampColor:e.target.value});}} /></label><label>Cỡ dấu {markSize} <input type="range" min={12} max={40} value={markSize} onChange={e => useStudioStore.setState({gradingMarkSize:Number(e.target.value)})} /></label></div>
+        <div className="flex flex-wrap gap-1">{['✓','✗','½','Đúng','Sai','Thiếu ý','Giỏi!','Xem lại'].map((m,i)=><button key={m} className="border rounded px-2 py-1" onClick={()=>setStampPreset('quick-mark-'+i,m,customStampColor)}>{m}</button>)}</div>
+        <div className="font-semibold">Ghi điểm từng ý</div>
+        <div className="flex flex-wrap gap-1">{[0.25,0.5,0.75,1,1.5,2,-0.25,-0.5].map(v=><button key={v} className="border rounded px-2 py-1" onClick={()=>chooseQuick(v)}>{formatScoreVi(v)}</button>)}</div>
+        <div className="flex gap-1"><input className="min-w-0 flex-1 border rounded p-1" value={quickInput} onChange={e=>setQuickInput(e.target.value)} placeholder="Điểm khác"/><button className="border rounded px-2" disabled={!quickInput.trim() || !Number.isFinite(Number(quickInput.replace(',','.')))} onClick={()=>chooseQuick(Number(quickInput.replace(',','.')))}>Dùng</button></div>
+        <div>Chọn dấu hoặc điểm, rồi nhấn vào bài nhiều lần. Esc để dừng.</div>
+        {g.questions.filter(q=>q.id.startsWith('quick-')).map(q=><div key={q.id} className="flex gap-2 items-center"><span>Điểm từng ý</span><input aria-label="Sửa điểm từng ý" className="w-20 border rounded" type="number" step="0.25" value={q.earnedScore ?? 0} onChange={e=>setQuestionScoreSynced(q.id,Number(e.target.value))}/><button onClick={()=>updateGradingSession(prev=>({...prev,questions:prev.questions.filter(x=>x.id!==q.id)}))}>Xóa</button></div>)}
+      </section>
       {/* Sub-navigation */}
-      <div className="grid grid-cols-4 gap-1 rounded-lg bg-slate-100 p-1 text-[13px] font-semibold">
+      <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1 text-[15px] font-semibold">
         {(
           [
             ['scores', 'Chấm điểm'],
@@ -205,7 +238,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
               onChange={(e) =>
                 updateGradingSession((prev) => ({ ...prev, studentName: e.target.value }), false)
               }
-              className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13.5px]"
+              className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[15px]"
             />
             <input
               type="text"
@@ -214,7 +247,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
               onChange={(e) =>
                 updateGradingSession((prev) => ({ ...prev, className: e.target.value }), false)
               }
-              className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13.5px]"
+              className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[15px]"
             />
             <input
               type="text"
@@ -223,7 +256,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
               onChange={(e) =>
                 updateGradingSession((prev) => ({ ...prev, studentCode: e.target.value }), false)
               }
-              className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13.5px]"
+              className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[15px]"
             />
             <select
               value={g.status}
@@ -233,7 +266,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                   status: e.target.value as 'ungraded' | 'in_progress' | 'graded',
                 }))
               }
-              className="rounded-lg border border-slate-300 px-2 py-1.5 text-[13.5px]"
+              className="rounded-lg border border-slate-300 px-2 py-1.5 text-[15px]"
             >
               <option value="ungraded">Chưa chấm</option>
               <option value="in_progress">Đang chấm</option>
@@ -244,7 +277,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
           {/* Grading Mode & Rounding */}
           <div className="grid grid-cols-3 gap-2">
             <label className="space-y-0.5">
-              <span className="text-[12px] text-slate-500">Hình thức</span>
+              <span className="text-[15px] text-slate-500">Hình thức</span>
               <select
                 value={g.mode}
                 onChange={(e) =>
@@ -253,7 +286,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                     mode: e.target.value as 'essay' | 'mcq' | 'mixed',
                   }))
                 }
-                className="w-full rounded border border-slate-300 px-1.5 py-1 text-[13px]"
+                className="w-full rounded border border-slate-300 px-1.5 py-1 text-[15px]"
               >
                 <option value="essay">Tự luận</option>
                 <option value="mcq">Trắc nghiệm</option>
@@ -261,7 +294,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
               </select>
             </label>
             <label className="space-y-0.5">
-              <span className="text-[12px] text-slate-500">Thang điểm</span>
+              <span className="text-[15px] text-slate-500">Thang điểm</span>
               <input
                 type="number"
                 min={1}
@@ -270,11 +303,11 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                 onChange={(e) =>
                   updateGradingSession((prev) => ({ ...prev, scaleMax: Math.max(1, Number(e.target.value)) }))
                 }
-                className="w-full rounded border border-slate-300 px-2 py-1 text-[13px] tabular-nums"
+                className="w-full rounded border border-slate-300 px-2 py-1 text-[15px] tabular-nums"
               />
             </label>
             <label className="space-y-0.5">
-              <span className="text-[12px] text-slate-500">Làm tròn</span>
+              <span className="text-[15px] text-slate-500">Làm tròn</span>
               <select
                 value={g.roundingMode}
                 onChange={(e) =>
@@ -283,7 +316,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                     roundingMode: e.target.value as RoundingMode,
                   }))
                 }
-                className="w-full rounded border border-slate-300 px-1.5 py-1 text-[13px]"
+                className="w-full rounded border border-slate-300 px-1.5 py-1 text-[15px]"
               >
                 <option value="none">Không làm tròn</option>
                 <option value="0.1">0,1 điểm</option>
@@ -296,7 +329,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
 
           {/* Subject Manual Rubric Presets */}
           <div className="rounded-lg bg-[#F4F8F7] border border-teal-200/80 p-2.5 space-y-1.5">
-            <div className="text-[12.5px] font-semibold text-[#164E63]">
+            <div className="text-[15px] font-semibold text-[#164E63]">
               Áp dụng khung tiêu chí theo môn (giáo viên chấm thủ công):
             </div>
             <div className="flex flex-wrap gap-1">
@@ -310,17 +343,17 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                       subject: preset.subject,
                       mode: 'essay',
                       scaleMax: preset.scaleMax,
-                      questions: preset.criteria.map((c, idx) => ({
+                      questions: [...prev.questions.filter(q=>q.id.startsWith("quick-")), ...preset.criteria.map((c, idx) => ({
                         id: `${preset.id}-${idx + 1}`,
                         label: c.label,
                         maxScore: c.maxScore,
                         earnedScore: null,
                         subParts: [],
-                      })),
+                      }))],
                     }));
                     notify(`Đã áp dụng khung tiêu chí "${preset.label}"`, 'success');
                   }}
-                  className="px-2 py-1 rounded-md bg-white border border-slate-200 hover:border-[#087F70] hover:bg-teal-50 text-[12px] font-medium text-slate-700 cursor-pointer transition-colors"
+                  className="px-2 py-1 rounded-md bg-white border border-slate-200 hover:border-[#087F70] hover:bg-teal-50 text-[15px] font-medium text-slate-700 cursor-pointer transition-colors"
                 >
                   {preset.label}
                 </button>
@@ -336,13 +369,13 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                 <button
                   type="button"
                   onClick={addQuestion}
-                  className="flex items-center gap-1 px-2 py-1 rounded bg-[#E6F1EF] hover:bg-[#087F70] text-[#164E63] hover:text-white text-[12.5px] font-semibold cursor-pointer"
+                  className="flex items-center gap-1 px-2 py-1 rounded bg-[#E6F1EF] hover:bg-[#087F70] text-[#164E63] hover:text-white text-[15px] font-semibold cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" /> Thêm câu
                 </button>
               </div>
               <div className="space-y-1.5">
-                {g.questions.map((q) => (
+                {g.questions.filter(q=>!q.id.startsWith("quick-")).map((q) => (
                   <div
                     key={q.id}
                     className="rounded-lg border border-slate-200 bg-white p-2 flex items-center justify-between gap-2"
@@ -438,21 +471,21 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                   <button
                     type="button"
                     onClick={() => addMcqRow('abcd')}
-                    className="px-2 py-0.5 rounded bg-slate-100 hover:bg-[#E6F1EF] text-[12px] font-semibold cursor-pointer"
+                    className="px-2 py-0.5 rounded bg-slate-100 hover:bg-[#E6F1EF] text-[15px] font-semibold cursor-pointer"
                   >
                     + ABCD
                   </button>
                   <button
                     type="button"
                     onClick={() => addMcqRow('tf4')}
-                    className="px-2 py-0.5 rounded bg-slate-100 hover:bg-[#E6F1EF] text-[12px] font-semibold cursor-pointer"
+                    className="px-2 py-0.5 rounded bg-slate-100 hover:bg-[#E6F1EF] text-[15px] font-semibold cursor-pointer"
                   >
                     + Đ/S 4 ý
                   </button>
                   <button
                     type="button"
                     onClick={() => addMcqRow('short')}
-                    className="px-2 py-0.5 rounded bg-slate-100 hover:bg-[#E6F1EF] text-[12px] font-semibold cursor-pointer"
+                    className="px-2 py-0.5 rounded bg-slate-100 hover:bg-[#E6F1EF] text-[15px] font-semibold cursor-pointer"
                   >
                     + Trả lời ngắn
                   </button>
@@ -460,7 +493,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
               </div>
 
               {/* Editable THPT 2025 TF4 Rule */}
-              <div className="rounded-lg bg-[#F4F8F7] border border-teal-200/70 p-2 text-[12px] space-y-1">
+              <div className="rounded-lg bg-[#F4F8F7] border border-teal-200/70 p-2 text-[15px] space-y-1">
                 <div className="font-semibold text-[#164E63]">Quy tắc điểm Đúng/Sai 4 ý (THPT 2025):</div>
                 <div className="grid grid-cols-4 gap-1">
                   {(
@@ -496,11 +529,11 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                   return (
                     <div
                       key={m.id}
-                      className="rounded-lg border border-slate-200 bg-white p-2 flex items-center justify-between gap-1.5 text-[13px]"
+                      className="rounded-lg border border-slate-200 bg-white p-2 flex items-center justify-between gap-1.5 text-[15px]"
                     >
                       <span className="font-semibold text-slate-600 w-10 shrink-0">
                         C{m.number}
-                        <span className="block text-[10px] text-slate-400">
+                        <span className="block text-[15px] text-slate-400">
                           {m.kind === 'abcd' ? 'ABCD' : m.kind === 'tf4' ? 'Đ/S' : 'TLN'}
                         </span>
                       </span>
@@ -520,7 +553,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                           )
                         }
                         title="Đáp án chuẩn của giáo viên"
-                        className="w-18 rounded border border-slate-200 px-1.5 py-1 text-center font-mono text-[12.5px] bg-slate-50"
+                        className="w-18 rounded border border-slate-200 px-1.5 py-1 text-center font-mono text-[15px] bg-slate-50"
                       />
                       <input
                         type="text"
@@ -538,7 +571,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                           )
                         }
                         title="Đáp án bài làm của học sinh"
-                        className="w-18 rounded border border-teal-300 px-1.5 py-1 text-center font-mono text-[12.5px] font-semibold"
+                        className="w-18 rounded border border-teal-300 px-1.5 py-1 text-center font-mono text-[15px] font-semibold"
                       />
                       <span
                         className={`w-11 text-right font-bold tabular-nums ${
@@ -556,7 +589,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
 
           {/* Teacher Summary Comment */}
           <label className="block space-y-1">
-            <span className="text-[13px] font-semibold text-slate-600">Nhận xét chung của giáo viên</span>
+            <span className="text-[15px] font-semibold text-slate-600">Nhận xét chung của giáo viên</span>
             <textarea
               rows={2}
               value={g.teacherComment}
@@ -564,7 +597,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                 updateGradingSession((prev) => ({ ...prev, teacherComment: e.target.value }), false)
               }
               placeholder="Nhập lời phê hoặc chọn từ mục Nhận xét..."
-              className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13.5px]"
+              className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-[15px]"
             />
           </label>
         </div>
@@ -573,7 +606,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
       {/* TAB 2: GRADING STAMPS */}
       {subTab === 'stamps' && (
         <div className="space-y-3">
-          <div className="text-[13.5px] text-slate-600">
+          <div className="text-[15px] text-slate-600">
             Chọn dấu chấm bên dưới rồi nhấn lên vị trí bất kỳ trên bài làm học sinh.
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -581,9 +614,9 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
               <button
                 key={st.code}
                 type="button"
-                onClick={() => setStampPreset(st.code, st.label, st.defaultColor)}
+                onClick={() => setStampPreset(st.code, st.label, customStampColor)}
                 style={{ borderColor: st.defaultColor, color: st.defaultColor }}
-                className={`px-2.5 py-2 rounded-lg border-2 font-bold text-[13.5px] text-center cursor-pointer transition-all ${
+                className={`px-2.5 py-2 rounded-lg border-2 font-bold text-[15px] text-center cursor-pointer transition-all ${
                   activeStampCode === st.code ? 'bg-red-50 ring-2 ring-[#087F70]' : 'bg-white hover:bg-slate-50'
                 }`}
               >
@@ -603,7 +636,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                 value={customStampText}
                 onChange={(e) => setCustomStampText(e.target.value)}
                 placeholder="VD: Rất sáng tạo!"
-                className="flex-1 rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13.5px]"
+                className="flex-1 rounded-lg border border-slate-300 px-2.5 py-1.5 text-[15px]"
               />
               <input
                 type="color"
@@ -630,20 +663,23 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
       {/* TAB 3: COMMENT LIBRARY */}
       {subTab === 'comments' && (
         <div className="space-y-3">
-          <div className="text-[13.5px] text-slate-600">
-            Nhấn vào mẫu nhận xét để dán ngay lên bài làm PDF và cập nhật vào sổ điểm.
+          <div className="text-[15px] text-slate-600">
+            Chọn nhận xét rồi nhấn vị trí trên bài. Alt + 1 đến Alt + 9 chọn nhanh.
           </div>
           <div className="space-y-1.5 max-h-72 overflow-y-auto">
-            {commentTemplates.map((tpl) => (
+            <select className="w-full border rounded p-2" value={commentCategory} onChange={e=>setCommentCategory(e.target.value)}>{['Tất cả',...new Set([...Object.keys(subjectNotes),...commentTemplates.map(t=>t.category)])].map(c=><option key={c}>{c}</option>)}</select>
+            {subjectNotes[commentCategory] && <button className="border rounded p-2" onClick={async()=>{for(const [i,t] of subjectNotes[commentCategory].entries()){const id=`subject-${commentCategory}-${i}`;if(!commentTemplates.some(x=>x.id===id)) await addCommentTemplate({id,category:commentCategory,text:t});}}}>Thêm bộ nhận xét {commentCategory}</button>}
+            {visibleComments.map((tpl) => (
+              <div key={tpl.id} className="flex gap-1 items-center">
               <button
                 key={tpl.id}
                 type="button"
-                onClick={() => insertCommentOnPage(tpl.text)}
+                onClick={() => setStampPreset("comment-"+tpl.id,tpl.text,customStampColor)}
                 className="w-full text-left p-2.5 rounded-lg border border-slate-200 bg-white hover:border-[#087F70] hover:bg-[#F4F8F7] transition-colors cursor-pointer"
               >
-                <div className="text-[11.5px] font-bold text-[#087F70]">{tpl.category}</div>
-                <div className="text-[13.5px] text-slate-800">{tpl.text}</div>
-              </button>
+                <div className="text-[15px] font-bold text-[#087F70]">{tpl.category}</div>
+                <div className="text-[15px] text-slate-800">{tpl.text}</div>
+              </button><button onClick={()=>{const t=window.prompt("Sửa nhận xét",tpl.text); if(t?.trim()) void addCommentTemplate({...tpl,text:t.trim()});}}>Sửa</button><button onClick={()=>{if(window.confirm("Xóa nhận xét mẫu?")) void removeCommentTemplate(tpl.id);}}>Xóa</button></div>
             ))}
           </div>
 
@@ -653,7 +689,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
               value={newCommentText}
               onChange={(e) => setNewCommentText(e.target.value)}
               placeholder="Thêm mẫu lời phê mới của thầy/cô..."
-              className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-[13.5px]"
+              className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-[15px]"
             />
             <button
               type="button"
@@ -661,7 +697,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
               onClick={async () => {
                 await addCommentTemplate({
                   id: `cmt-${Date.now()}`,
-                  category: 'Cá nhân',
+                  category: commentCategory === 'Tất cả' ? 'Cá nhân' : commentCategory,
                   text: newCommentText.trim(),
                 });
                 setNewCommentText('');
@@ -686,7 +722,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                 exportGradebookToExcel(gradedPapers);
                 notify('Đã xuất bảng điểm Excel (.xlsx)', 'success');
               }}
-              className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-[13px] disabled:opacity-40 cursor-pointer"
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-[15px] disabled:opacity-40 cursor-pointer"
             >
               <FileSpreadsheet className="w-4 h-4" />
               <span>Xuất Excel</span>
@@ -698,7 +734,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                 exportGradebookToCsv(gradedPapers);
                 notify('Đã xuất bảng điểm CSV (UTF-8)', 'success');
               }}
-              className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 font-semibold text-[13px] disabled:opacity-40 cursor-pointer"
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 font-semibold text-[15px] disabled:opacity-40 cursor-pointer"
             >
               <Download className="w-4 h-4" />
               <span>Xuất CSV</span>
@@ -717,7 +753,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                 key={id}
                 type="button"
                 onClick={() => setGradebookFilter(id)}
-                className={`px-2 py-1 rounded text-[12.5px] font-semibold cursor-pointer ${
+                className={`px-2 py-1 rounded text-[15px] font-semibold cursor-pointer ${
                   gradebookFilter === id ? 'bg-[#164E63] text-white' : 'bg-slate-100 text-slate-600'
                 }`}
               >
@@ -727,7 +763,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
           </div>
 
           {filteredGradebook.length === 0 ? (
-            <div className="rounded-lg bg-slate-50 border border-slate-200 p-3.5 text-slate-600 text-[13.5px]">
+            <div className="rounded-lg bg-slate-50 border border-slate-200 p-3.5 text-slate-600 text-[15px]">
               Chưa có bài chấm nào được lưu. Nhấn <strong>Lưu bảng điểm</strong> sau khi chấm xong mỗi học sinh.
             </div>
           ) : (
@@ -739,7 +775,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                 >
                   <div className="min-w-0">
                     <div className="font-bold text-slate-900 truncate">{rec.studentName}</div>
-                    <div className="text-[12px] text-slate-500 truncate">
+                    <div className="text-[15px] text-slate-500 truncate">
                       {rec.className || '—'} · {rec.examTitle}
                     </div>
                   </div>
@@ -748,7 +784,7 @@ export const GradingPanel: React.FC<GradingPanelProps> = ({ doc }) => {
                       {formatScoreVi(rec.finalScore)}/{rec.scaleMax}
                     </div>
                     {rec.status === 'graded' && (
-                      <div className="text-[11px] text-emerald-700 flex items-center justify-end gap-0.5">
+                      <div className="text-[15px] text-emerald-700 flex items-center justify-end gap-0.5">
                         <CheckCircle2 className="w-3 h-3" /> Đã chấm
                       </div>
                     )}
