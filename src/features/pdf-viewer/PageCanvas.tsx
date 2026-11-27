@@ -42,6 +42,8 @@ export const PageCanvas: React.FC<PageCanvasProps> = ({
   const penColor = useStudioStore((s) => s.penColor);
   const penWidth = useStudioStore((s) => s.penWidth);
   const penOpacity = useStudioStore((s) => s.penOpacity);
+  const gradingMarkSize = useStudioStore(s => s.gradingMarkSize);
+  const quickGradeValue = useStudioStore(s => s.quickGradeValue);
   const activeStampCode = useStudioStore((s) => s.activeStampCode);
   const activeStampLabel = useStudioStore((s) => s.activeStampLabel);
   const activeStampColor = useStudioStore((s) => s.activeStampColor);
@@ -433,26 +435,34 @@ export const PageCanvas: React.FC<PageCanvasProps> = ({
     }
 
     if (activeTool === 'grade-stamp') {
+      if (activeStampCode.startsWith('comment-')) {
+        addObject({id,type:'grading-comment',pageId:pageMeta.id,x:Math.round(pt.x),y:Math.round(pt.y),width:240,height:60,rotation:0,zIndex:32,opacity:1,text:activeStampLabel,color:activeStampColor,fontSize:Math.min(gradingMarkSize,16)});
+        return;
+      }
       addObject({
         id,
         type: 'grading-stamp',
         pageId: pageMeta.id,
         x: Math.round(pt.x - 45),
         y: Math.round(pt.y - 14),
-        width: Math.max(76, activeStampLabel.length * 8.5 + 18),
-        height: 28,
+        width: Math.max(32, activeStampLabel.length * gradingMarkSize * 0.65 + 12),
+        height: gradingMarkSize + 10,
         rotation: 0,
         zIndex: 30,
         opacity: 1,
         stampCode: activeStampCode,
         label: activeStampLabel,
         color: activeStampColor,
-        fontSize: 12,
+        fontSize: gradingMarkSize,
       });
       return;
     }
 
     if (activeTool === 'grade-score') {
+      if (activeQuestionIdForScore === '__quick__') {
+        addObject({ id, type: 'grading-score', pageId: pageMeta.id, x: Math.round(pt.x), y: Math.round(pt.y), width: 75, height: 28, rotation: 0, zIndex: 32, opacity: 1, questionId: `quick-${id}`, questionLabel: 'Điểm từng ý', score: quickGradeValue, maxScore: Math.abs(quickGradeValue), color: activeStampColor });
+        return;
+      }
       const q =
         doc.grading.questions.find((item) => item.id === activeQuestionIdForScore) ||
         doc.grading.questions[0];
